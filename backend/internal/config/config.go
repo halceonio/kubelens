@@ -157,7 +157,7 @@ func applyDefaults(cfg *Config) {
 		cfg.Server.ReadTimeoutSeconds = 10
 	}
 	if cfg.Server.WriteTimeoutSeconds == 0 {
-		cfg.Server.WriteTimeoutSeconds = 30
+		cfg.Server.WriteTimeoutSeconds = 0
 	}
 	if cfg.Server.IdleTimeoutSeconds == 0 {
 		cfg.Server.IdleTimeoutSeconds = 60

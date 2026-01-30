@@ -24,6 +24,14 @@ logs:
 ```
 This controls how often app log streams re-check pod membership to pick up new replicas or rolling updates.
 
+## SSE timeouts
+Log streaming uses long-lived SSE connections. Set:
+```yaml
+server:
+  write_timeout_seconds: 0
+```
+to disable the write timeout so streams are not terminated mid-session.
+
 ## Local cache in the container
 When using the single-container image, you can optionally start a local Valkey instance with:
 ```

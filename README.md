@@ -128,6 +128,7 @@ kubernetes:
 
 ## Configuration notes
 - `logs.default_tail_lines`, `logs.max_tail_lines`, and `logs.max_line_length` default to `10000`.
+- For SSE log streaming, set `server.write_timeout_seconds: 0` to avoid premature disconnects.
 - Session persistence supports redis, sqlite, or postgres. With no storage configured, the in-memory store is used.
 - For local testing, `KUBELENS_KUBECONFIG` or `KUBECONFIG` can point to a kubeconfig file.
 
