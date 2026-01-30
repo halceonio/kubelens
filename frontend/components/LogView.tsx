@@ -297,7 +297,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   const isMarker = log.kind === 'marker';
   const isActiveMatch = activeMatchIndex === index;
 
-  const displayMessage = isMarker && !showDetails ? `${log.podName}: ${log.message}` : log.message;
+  const displayMessage = isMarker ? `${log.podName}: ${log.message}` : log.message;
 
   return (
     <div 
