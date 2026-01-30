@@ -52,7 +52,7 @@ export interface Pod {
 export interface AppResource {
   name: string;
   namespace: string;
-  type: 'Deployment' | 'StatefulSet';
+  type: 'Deployment' | 'StatefulSet' | 'Cluster' | 'Dragonfly';
   replicas: number;
   readyReplicas: number;
   podNames: string[];

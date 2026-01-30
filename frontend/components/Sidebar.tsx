@@ -244,16 +244,16 @@ const Sidebar: React.FC<SidebarProps> = ({
               </button>
             )}
             <button 
-              onClick={() => setViewMode('pods')}
-              className={`flex-1 min-w-[80px] py-1.5 text-[9px] font-bold uppercase tracking-wider rounded-md transition-all ${viewMode === 'pods' ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm border border-slate-200 dark:border-slate-700' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
-            >
-              Pods
-            </button>
-            <button 
               onClick={() => setViewMode('apps')}
               className={`flex-1 min-w-[80px] py-1.5 text-[9px] font-bold uppercase tracking-wider rounded-md transition-all ${viewMode === 'apps' ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm border border-slate-200 dark:border-slate-700' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
             >
               Apps
+            </button>
+            <button 
+              onClick={() => setViewMode('pods')}
+              className={`flex-1 min-w-[80px] py-1.5 text-[9px] font-bold uppercase tracking-wider rounded-md transition-all ${viewMode === 'pods' ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm border border-slate-200 dark:border-slate-700' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}
+            >
+              Pods
             </button>
           </div>
 

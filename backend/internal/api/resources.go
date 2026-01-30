@@ -11,6 +11,7 @@ import (
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
@@ -76,6 +77,59 @@ type appResponse struct {
 	Secrets       []string              `json:"secrets"`
 	ConfigMaps    []string              `json:"configMaps"`
 	Image         string                `json:"image,omitempty"`
+}
+
+const (
+	cnpgClusterListPathFmt = "/apis/postgresql.cnpg.io/v1/namespaces/%s/clusters"
+	cnpgClusterGetPathFmt  = "/apis/postgresql.cnpg.io/v1/namespaces/%s/clusters/%s"
+	dragonflyListPathFmt   = "/apis/dragonflydb.io/v1alpha1/namespaces/%s/dragonflies"
+	dragonflyGetPathFmt    = "/apis/dragonflydb.io/v1alpha1/namespaces/%s/dragonflies/%s"
+	cnpgClusterLabelKey    = "cnpg.io/cluster"
+	dragonflyAppLabelKey   = "app"
+	dragonflyOwnerKind     = "Dragonfly"
+)
+
+type cnpgClusterList struct {
+	Items []cnpgCluster `json:"items"`
+}
+
+type cnpgCluster struct {
+	Metadata metav1.ObjectMeta `json:"metadata"`
+	Spec     cnpgClusterSpec   `json:"spec"`
+	Status   cnpgClusterStatus `json:"status"`
+}
+
+type cnpgClusterSpec struct {
+	Instances *int32                      `json:"instances"`
+	ImageName string                      `json:"imageName"`
+	Resources corev1.ResourceRequirements `json:"resources"`
+}
+
+type cnpgClusterStatus struct {
+	ReadyInstances int32    `json:"readyInstances"`
+	InstanceNames  []string `json:"instanceNames"`
+	Image          string   `json:"image"`
+}
+
+type dragonflyList struct {
+	Items []dragonflyResource `json:"items"`
+}
+
+type dragonflyResource struct {
+	Metadata metav1.ObjectMeta `json:"metadata"`
+	Spec     dragonflySpec     `json:"spec"`
+	Status   dragonflyStatus   `json:"status"`
+}
+
+type dragonflySpec struct {
+	Image     string                      `json:"image"`
+	Replicas  *int32                      `json:"replicas"`
+	Env       []corev1.EnvVar             `json:"env"`
+	Resources corev1.ResourceRequirements `json:"resources"`
+}
+
+type dragonflyStatus struct {
+	Phase string `json:"phase"`
 }
 
 func (h *KubeHandler) handleNamespaces(w http.ResponseWriter, r *http.Request) {
@@ -217,10 +271,37 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 	for _, sts := range statefulSets.Items {
+		if hasOwnerKind(sts.OwnerReferences, dragonflyOwnerKind) {
+			continue
+		}
 		if !h.allowApp(sts.Name, sts.Labels) {
 			continue
 		}
 		resp = append(resp, h.mapStatefulSet(ctx, &sts))
+	}
+
+	cnpgClusters, err := h.listCnpgClusters(ctx, namespace)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	for _, cluster := range cnpgClusters {
+		if !h.allowApp(cluster.Metadata.Name, cluster.Metadata.Labels) {
+			continue
+		}
+		resp = append(resp, h.mapCnpgCluster(ctx, &cluster))
+	}
+
+	dragonflies, err := h.listDragonflies(ctx, namespace)
+	if err != nil {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	for _, dragonfly := range dragonflies {
+		if !h.allowApp(dragonfly.Metadata.Name, dragonfly.Metadata.Labels) {
+			continue
+		}
+		resp = append(resp, h.mapDragonfly(ctx, &dragonfly))
 	}
 
 	writeJSON(w, resp)
@@ -243,6 +324,10 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 	}
 	sts, err := h.client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
+		if hasOwnerKind(sts.OwnerReferences, dragonflyOwnerKind) {
+			writeError(w, http.StatusNotFound, "app not found")
+			return
+		}
 		if !h.allowApp(sts.Name, sts.Labels) {
 			writeError(w, http.StatusForbidden, "app not allowed")
 			return
@@ -250,6 +335,34 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 		writeJSON(w, h.mapStatefulSet(ctx, sts))
 		return
 	}
+	cluster, err := h.getCnpgCluster(ctx, namespace, name)
+	if err == nil {
+		if !h.allowApp(cluster.Metadata.Name, cluster.Metadata.Labels) {
+			writeError(w, http.StatusForbidden, "app not allowed")
+			return
+		}
+		writeJSON(w, h.mapCnpgCluster(ctx, cluster))
+		return
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
+	dragonfly, err := h.getDragonfly(ctx, namespace, name)
+	if err == nil {
+		if !h.allowApp(dragonfly.Metadata.Name, dragonfly.Metadata.Labels) {
+			writeError(w, http.StatusForbidden, "app not allowed")
+			return
+		}
+		writeJSON(w, h.mapDragonfly(ctx, dragonfly))
+		return
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		writeError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+
 	writeError(w, http.StatusNotFound, "app not found")
 }
 
@@ -421,6 +534,140 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 	}
 }
 
+func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster) appResponse {
+	pods, _ := h.listPodsForLabel(ctx, cluster.Metadata.Namespace, fmt.Sprintf("%s=%s", cnpgClusterLabelKey, cluster.Metadata.Name))
+	requests, limits := sumResourceRequirements(cluster.Spec.Resources)
+	image := cluster.Spec.ImageName
+	if image == "" {
+		image = cluster.Status.Image
+	}
+
+	return appResponse{
+		Name:          cluster.Metadata.Name,
+		Namespace:     cluster.Metadata.Namespace,
+		Type:          "Cluster",
+		Replicas:      derefInt32(cluster.Spec.Instances),
+		ReadyReplicas: cluster.Status.ReadyInstances,
+		PodNames:      pods,
+		Labels:        cluster.Metadata.Labels,
+		Annotations:   cluster.Metadata.Annotations,
+		Env:           map[string]string{},
+		Resources: resourceUsage{
+			CPUUsage:   "0",
+			MemUsage:   "0",
+			CPURequest: requests.cpu.String(),
+			MemRequest: requests.mem.String(),
+			CPULimit:   limits.cpu.String(),
+			MemLimit:   limits.mem.String(),
+		},
+		Volumes:    []volumeMountResponse{},
+		Secrets:    []string{},
+		ConfigMaps: []string{},
+		Image:      image,
+	}
+}
+
+func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource) appResponse {
+	pods, ready := h.listPodsForLabel(ctx, dragonfly.Metadata.Namespace, fmt.Sprintf("%s=%s", dragonflyAppLabelKey, dragonfly.Metadata.Name))
+	requests, limits := sumResourceRequirements(dragonfly.Spec.Resources)
+	secretRefs, configRefs := extractEnvRefs(dragonfly.Spec.Env)
+
+	return appResponse{
+		Name:          dragonfly.Metadata.Name,
+		Namespace:     dragonfly.Metadata.Namespace,
+		Type:          "Dragonfly",
+		Replicas:      derefInt32(dragonfly.Spec.Replicas),
+		ReadyReplicas: ready,
+		PodNames:      pods,
+		Labels:        dragonfly.Metadata.Labels,
+		Annotations:   dragonfly.Metadata.Annotations,
+		Env:           extractEnv(dragonfly.Metadata.Namespace, dragonfly.Spec.Env, nil, nil),
+		Resources: resourceUsage{
+			CPUUsage:   "0",
+			MemUsage:   "0",
+			CPURequest: requests.cpu.String(),
+			MemRequest: requests.mem.String(),
+			CPULimit:   limits.cpu.String(),
+			MemLimit:   limits.mem.String(),
+		},
+		Volumes:    []volumeMountResponse{},
+		Secrets:    secretRefs,
+		ConfigMaps: configRefs,
+		Image:      dragonfly.Spec.Image,
+	}
+}
+
+func (h *KubeHandler) listPodsForLabel(ctx context.Context, namespace, selector string) ([]string, int32) {
+	if selector == "" {
+		return []string{}, 0
+	}
+	pods, err := h.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	if err != nil {
+		return []string{}, 0
+	}
+
+	podNames := make([]string, 0, len(pods.Items))
+	var ready int32
+	for _, pod := range pods.Items {
+		if !h.allowPod(&pod) {
+			continue
+		}
+		podNames = append(podNames, pod.Name)
+		if podReady(&pod) {
+			ready++
+		}
+	}
+	sort.Strings(podNames)
+	return podNames, ready
+}
+
+func sumResourceRequirements(req corev1.ResourceRequirements) (resourceTotals, resourceTotals) {
+	var requests resourceTotals
+	var limits resourceTotals
+	if quantity, ok := req.Requests[corev1.ResourceCPU]; ok {
+		requests.cpu.Add(quantity)
+	}
+	if quantity, ok := req.Requests[corev1.ResourceMemory]; ok {
+		requests.mem.Add(quantity)
+	}
+	if quantity, ok := req.Limits[corev1.ResourceCPU]; ok {
+		limits.cpu.Add(quantity)
+	}
+	if quantity, ok := req.Limits[corev1.ResourceMemory]; ok {
+		limits.mem.Add(quantity)
+	}
+	return requests, limits
+}
+
+func extractEnvRefs(envs []corev1.EnvVar) ([]string, []string) {
+	secrets := map[string]struct{}{}
+	configMaps := map[string]struct{}{}
+	for _, env := range envs {
+		if env.ValueFrom == nil {
+			continue
+		}
+		if env.ValueFrom.SecretKeyRef != nil {
+			secrets[env.ValueFrom.SecretKeyRef.Name] = struct{}{}
+		}
+		if env.ValueFrom.ConfigMapKeyRef != nil {
+			configMaps[env.ValueFrom.ConfigMapKeyRef.Name] = struct{}{}
+		}
+	}
+	return mapKeys(secrets), mapKeys(configMaps)
+}
+
+func podReady(pod *corev1.Pod) bool {
+	if pod.Status.Phase != corev1.PodRunning {
+		return false
+	}
+	for _, status := range pod.Status.ContainerStatuses {
+		if !status.Ready {
+			return false
+		}
+	}
+	return true
+}
+
 func (h *KubeHandler) listPodsForSelector(ctx context.Context, namespace string, selector *metav1.LabelSelector) []string {
 	sel := selectorString(selector)
 	if sel == "" {
@@ -557,6 +804,15 @@ func ownerRefName(refs []metav1.OwnerReference) string {
 	return ""
 }
 
+func hasOwnerKind(refs []metav1.OwnerReference, kind string) bool {
+	for _, ref := range refs {
+		if ref.Kind == kind {
+			return true
+		}
+	}
+	return false
+}
+
 func derefInt32(val *int32) int32 {
 	if val == nil {
 		return 0
@@ -673,6 +929,64 @@ func (h *KubeHandler) fetchPodMetrics(ctx context.Context, namespace, name strin
 	}, nil
 }
 
+func (h *KubeHandler) listCnpgClusters(ctx context.Context, namespace string) ([]cnpgCluster, error) {
+	path := fmt.Sprintf(cnpgClusterListPathFmt, namespace)
+	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var list cnpgClusterList
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func (h *KubeHandler) getCnpgCluster(ctx context.Context, namespace, name string) (*cnpgCluster, error) {
+	path := fmt.Sprintf(cnpgClusterGetPathFmt, namespace, name)
+	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	if err != nil {
+		return nil, err
+	}
+	var cluster cnpgCluster
+	if err := json.Unmarshal(data, &cluster); err != nil {
+		return nil, err
+	}
+	return &cluster, nil
+}
+
+func (h *KubeHandler) listDragonflies(ctx context.Context, namespace string) ([]dragonflyResource, error) {
+	path := fmt.Sprintf(dragonflyListPathFmt, namespace)
+	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	var list dragonflyList
+	if err := json.Unmarshal(data, &list); err != nil {
+		return nil, err
+	}
+	return list.Items, nil
+}
+
+func (h *KubeHandler) getDragonfly(ctx context.Context, namespace, name string) (*dragonflyResource, error) {
+	path := fmt.Sprintf(dragonflyGetPathFmt, namespace, name)
+	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	if err != nil {
+		return nil, err
+	}
+	var dragonfly dragonflyResource
+	if err := json.Unmarshal(data, &dragonfly); err != nil {
+		return nil, err
+	}
+	return &dragonfly, nil
+}
+
 func (h *KubeHandler) listPodsForApp(ctx context.Context, namespace, name string) ([]string, error) {
 	selector, err := h.appSelector(ctx, namespace, name)
 	if err != nil {
@@ -704,6 +1018,22 @@ func selectorString(selector *metav1.LabelSelector) string {
 }
 
 func (h *KubeHandler) appSelector(ctx context.Context, namespace, name string) (string, error) {
+	cluster, err := h.getCnpgCluster(ctx, namespace, name)
+	if err == nil {
+		return fmt.Sprintf("%s=%s", cnpgClusterLabelKey, cluster.Metadata.Name), nil
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return "", err
+	}
+
+	dragonfly, err := h.getDragonfly(ctx, namespace, name)
+	if err == nil {
+		return fmt.Sprintf("%s=%s", dragonflyAppLabelKey, dragonfly.Metadata.Name), nil
+	}
+	if err != nil && !apierrors.IsNotFound(err) {
+		return "", err
+	}
+
 	deployment, err := h.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
 		return selectorString(deployment.Spec.Selector), nil
