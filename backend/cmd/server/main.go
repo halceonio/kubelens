@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"log"
 	"net/http"
 	"os"
 	"os/signal"
@@ -11,6 +10,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/charmbracelet/log"
 	"github.com/fsnotify/fsnotify"
 
 	"github.com/halceonio/kubelens/backend/internal/auth"
@@ -21,40 +21,47 @@ import (
 )
 
 func main() {
-	logger := log.New(os.Stdout, "kubelens-backend ", log.LstdFlags|log.LUTC)
+	logger := log.NewWithOptions(os.Stdout, log.Options{
+		ReportTimestamp: true,
+		TimeFormat:      time.RFC3339,
+		Prefix:          "kubelens-backend",
+		Level:           log.InfoLevel,
+	})
+	logger.SetTimeFunction(log.NowUTC)
+	log.SetDefault(logger)
 
 	cfg, path, err := config.Load()
 	if err != nil {
-		logger.Fatalf("config error: %v", err)
+		logger.Fatal("config error", "err", err)
 	}
-	logger.Printf("loaded config from %s", path)
+	logger.Info("loaded config", "path", path)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
 	verifier, err := auth.NewVerifier(ctx, cfg.Auth)
 	if err != nil {
-		logger.Fatalf("auth setup error: %v", err)
+		logger.Fatal("auth setup error", "err", err)
 	}
 	dynamicVerifier := auth.NewDynamicVerifier(verifier)
 
 	k8sClient, metaClient, err := k8s.NewClients(cfg.Kubernetes)
 	if err != nil {
-		logger.Fatalf("k8s client error: %v", err)
+		logger.Fatal("k8s client error", "err", err)
 	}
 
 	sessionStore, backend, err := storage.NewSessionStoreFromConfig(ctx, cfg)
 	if err != nil {
-		logger.Fatalf("session store error: %v", err)
+		logger.Fatal("session store error", "err", err)
 	}
-	logger.Printf("session store: %s", backend)
+	logger.Info("session store ready", "backend", backend)
 
 	srv := server.New(cfg, dynamicVerifier, k8sClient, metaClient, sessionStore)
 
 	go watchConfig(ctx, logger, path, func(updated *config.Config) {
 		newVerifier, err := auth.NewVerifier(ctx, updated.Auth)
 		if err != nil {
-			logger.Printf("config reload: auth verifier update failed: %v", err)
+			logger.Error("config reload: auth verifier update failed", "err", err)
 		} else {
 			dynamicVerifier.Update(newVerifier)
 		}
@@ -62,21 +69,21 @@ func main() {
 	})
 
 	go func() {
-		logger.Printf("server listening on %s", cfg.Server.Address)
+		logger.Info("server listening", "address", cfg.Server.Address)
 		if err := srv.Start(); err != nil && err != http.ErrServerClosed {
-			logger.Fatalf("server error: %v", err)
+			logger.Fatal("server error", "err", err)
 		}
 	}()
 
 	sigCh := make(chan os.Signal, 1)
 	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
 	<-sigCh
-	logger.Printf("shutdown signal received")
+	logger.Info("shutdown signal received")
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
-		logger.Printf("shutdown error: %v", err)
+		logger.Error("shutdown error", "err", err)
 	}
 }
 
@@ -87,18 +94,18 @@ func watchConfig(ctx context.Context, logger *log.Logger, path string, onReload 
 
 	watcher, err := fsnotify.NewWatcher()
 	if err != nil {
-		logger.Printf("config watcher error: %v", err)
+		logger.Error("config watcher error", "err", err)
 		return
 	}
 	defer watcher.Close()
 
 	dir := filepath.Dir(path)
 	if err := watcher.Add(dir); err != nil {
-		logger.Printf("config watcher error: %v", err)
+		logger.Error("config watcher error", "err", err)
 		return
 	}
 	if err := watcher.Add(path); err != nil {
-		logger.Printf("config watcher error: %v", err)
+		logger.Error("config watcher error", "err", err)
 	}
 
 	var mu sync.Mutex
@@ -113,10 +120,10 @@ func watchConfig(ctx context.Context, logger *log.Logger, path string, onReload 
 		timer = time.AfterFunc(500*time.Millisecond, func() {
 			updated, err := config.LoadFromPath(path)
 			if err != nil {
-				logger.Printf("config reload error: %v", err)
+				logger.Error("config reload error", "err", err)
 				return
 			}
-			logger.Printf("config reloaded from %s", path)
+			logger.Info("config reloaded", "path", path)
 			onReload(updated)
 		})
 	}
@@ -134,7 +141,7 @@ func watchConfig(ctx context.Context, logger *log.Logger, path string, onReload 
 			}
 		case err := <-watcher.Errors:
 			if err != nil {
-				logger.Printf("config watcher error: %v", err)
+				logger.Error("config watcher error", "err", err)
 			}
 		}
 	}

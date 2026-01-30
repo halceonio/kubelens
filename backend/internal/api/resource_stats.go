@@ -1,9 +1,10 @@
 package api
 
 import (
-	"log"
 	"sync"
 	"sync/atomic"
+
+	"github.com/charmbracelet/log"
 )
 
 type ResourceStats struct {
@@ -149,13 +150,31 @@ func (s *ResourceStats) logSnapshot() {
 	if delta.total() == 0 {
 		return
 	}
-	log.Printf("k8s-cache stats (interval): pods hit/miss/informer %d/%d/%d api %d err %d | deps hit/miss/informer %d/%d/%d api %d err %d | sts hit/miss/informer %d/%d/%d api %d err %d | cnpg hit/miss %d/%d api %d err %d | dragonfly hit/miss %d/%d api %d err %d | throttled retries %d",
-		delta.podsCacheHit, delta.podsCacheMiss, delta.podsInformerHit, delta.podsAPICall, delta.podsAPIErr,
-		delta.depCacheHit, delta.depCacheMiss, delta.depInformerHit, delta.depAPICall, delta.depAPIErr,
-		delta.stsCacheHit, delta.stsCacheMiss, delta.stsInformerHit, delta.stsAPICall, delta.stsAPIErr,
-		delta.cnpgCacheHit, delta.cnpgCacheMiss, delta.cnpgAPICall, delta.cnpgAPIErr,
-		delta.dragonCacheHit, delta.dragonCacheMiss, delta.dragonAPICall, delta.dragonAPIErr,
-		delta.throttleRetries,
+	log.Info("k8s cache stats (interval)",
+		"pods_hit", delta.podsCacheHit,
+		"pods_miss", delta.podsCacheMiss,
+		"pods_informer", delta.podsInformerHit,
+		"pods_api", delta.podsAPICall,
+		"pods_err", delta.podsAPIErr,
+		"deploy_hit", delta.depCacheHit,
+		"deploy_miss", delta.depCacheMiss,
+		"deploy_informer", delta.depInformerHit,
+		"deploy_api", delta.depAPICall,
+		"deploy_err", delta.depAPIErr,
+		"sts_hit", delta.stsCacheHit,
+		"sts_miss", delta.stsCacheMiss,
+		"sts_informer", delta.stsInformerHit,
+		"sts_api", delta.stsAPICall,
+		"sts_err", delta.stsAPIErr,
+		"cnpg_hit", delta.cnpgCacheHit,
+		"cnpg_miss", delta.cnpgCacheMiss,
+		"cnpg_api", delta.cnpgAPICall,
+		"cnpg_err", delta.cnpgAPIErr,
+		"dragon_hit", delta.dragonCacheHit,
+		"dragon_miss", delta.dragonCacheMiss,
+		"dragon_api", delta.dragonAPICall,
+		"dragon_err", delta.dragonAPIErr,
+		"throttle_retries", delta.throttleRetries,
 	)
 }
 

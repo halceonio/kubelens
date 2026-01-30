@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
 	"strconv"
 	"strings"
 	"sync"
@@ -17,6 +16,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
+	"github.com/charmbracelet/log"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/halceonio/kubelens/backend/internal/storage"
@@ -72,7 +72,6 @@ type logStream struct {
 	leader      bool
 	lockKey     string
 	lockValue   string
-	lockMu      sync.Mutex
 	k8sCancel   context.CancelFunc
 	redisCancel context.CancelFunc
 	lastRedisID string
@@ -154,13 +153,13 @@ func newLogStreamHub(handler *KubeHandler) *logStreamHub {
 		if redisURL != "" {
 			client, err := storage.NewRedisClientFromURL(context.Background(), redisURL)
 			if err != nil {
-				log.Printf("log streams: redis disabled (%v)", err)
+				log.Warn("log streams: redis disabled", "err", err)
 			} else {
 				hub.redis = client
 				hub.redisEnabled = true
 			}
 		} else {
-			log.Printf("log streams: redis disabled (missing redis_url)")
+			log.Warn("log streams: redis disabled (missing redis_url)")
 		}
 	}
 
@@ -451,7 +450,7 @@ func (s *logStream) ingestK8sEntry(ctx context.Context, entry logEntry) {
 	if s.hub.redisEnabled {
 		id, err := s.addRedisEntry(ctx, entry)
 		if err != nil {
-			log.Printf("log stream redis add failed: %v", err)
+			log.Warn("log stream redis add failed", "err", err)
 		} else {
 			entry.ID = id
 		}
