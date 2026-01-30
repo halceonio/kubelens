@@ -586,8 +586,11 @@ const App: React.FC = () => {
           </header>
 
           <div className={`flex-1 p-4 overflow-y-auto custom-scrollbar transition-colors duration-200 ${ 
-            visibleResources.length === 0 ? 'flex items-center justify-center' :
-            'grid grid-cols-1 xl:grid-cols-2 gap-4'
+            visibleResources.length === 0
+              ? 'flex items-center justify-center'
+              : visibleResources.length <= 2
+                ? 'grid grid-cols-1 gap-4'
+                : 'grid grid-cols-1 xl:grid-cols-2 gap-4'
           }`}>
             {configError && (
               <div className="absolute top-16 left-4 right-4 z-10 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-500">
