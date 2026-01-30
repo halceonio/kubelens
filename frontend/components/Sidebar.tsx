@@ -104,21 +104,34 @@ const Sidebar: React.FC<SidebarProps> = ({
 
   const appGroupsMap = useMemo(() => {
     if (viewMode !== 'groups') return {};
-    
+
     const selector = MOCK_CONFIG.appGroups.labels.selector;
-    const groups: Record<string, AppResource[]> = {};
-    
-    allApps.forEach(app => {
-      const groupVal = app.labels?.[selector] || 'Uncategorized';
-      if (!groups[groupVal]) groups[groupVal] = [];
-      groups[groupVal].push(app);
+    const nameKey = MOCK_CONFIG.appGroups.labels.name;
+    const groups: Record<string, { displayName: string; apps: AppResource[] }> = {};
+
+    allApps.forEach((app) => {
+      const groupVal = app.labels?.[selector];
+      if (!groupVal) return;
+
+      if (!groups[groupVal]) {
+        groups[groupVal] = {
+          displayName: app.labels?.[nameKey] || groupVal,
+          apps: []
+        };
+      } else if (app.labels?.[nameKey] && groups[groupVal].displayName === groupVal) {
+        groups[groupVal].displayName = app.labels[nameKey];
+      }
+
+      groups[groupVal].apps.push(app);
     });
-    
+
     return groups;
   }, [allApps, viewMode]);
 
   const sortedGroupKeys = useMemo(() => {
-    return Object.keys(appGroupsMap).sort();
+    return Object.keys(appGroupsMap).sort((a, b) =>
+      appGroupsMap[a].displayName.localeCompare(appGroupsMap[b].displayName)
+    );
   }, [appGroupsMap]);
 
   const getStatusColor = (status: string) => {
@@ -144,13 +157,15 @@ const Sidebar: React.FC<SidebarProps> = ({
     const query = search.toLowerCase();
     if (!query) return true;
     const displayName = getAppDisplayName(app).toLowerCase();
-    return displayName.includes(query) || app.name.toLowerCase().includes(query);
+    const namespaceName = `${app.namespace}/${app.name}`.toLowerCase();
+    return displayName.includes(query) || namespaceName.includes(query) || app.name.toLowerCase().includes(query);
   };
 
   const getAppMetadata = (app: AppResource) => {
     const { environment, version } = MOCK_CONFIG.appGroups.labels;
     const env = app.labels?.[environment];
-    const ver = app.labels?.[version] || app.image;
+    const rawVersion = app.labels?.[version] || app.image;
+    const ver = rawVersion?.includes(':') ? rawVersion.split(':').pop() : rawVersion;
     return { env, ver };
   };
 
@@ -265,7 +280,17 @@ const Sidebar: React.FC<SidebarProps> = ({
                 Analyzing App Groups...
               </div>
             ) : (
-              sortedGroupKeys.map(group => (
+              sortedGroupKeys.map((group) => {
+                const groupDisplayName = appGroupsMap[group].displayName;
+                const query = search.toLowerCase();
+                const groupMatches = !query || groupDisplayName.toLowerCase().includes(query);
+                const filteredApps = groupMatches
+                  ? appGroupsMap[group].apps
+                  : appGroupsMap[group].apps.filter(appMatchesSearch);
+
+                if (filteredApps.length === 0) return null;
+
+                return (
                 <div key={group} className="mb-1">
                   <button
                     onClick={() => toggleGroup(group)}
@@ -279,17 +304,14 @@ const Sidebar: React.FC<SidebarProps> = ({
                     >
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M9 5l7 7-7 7" />
                     </svg>
-                    <div className="flex flex-col items-start leading-none overflow-hidden">
-                      <span className="truncate">{group}</span>
-                      <span className="text-[8px] text-slate-400 dark:text-slate-500 uppercase tracking-tighter mt-0.5">{MOCK_CONFIG.appGroups.labels.name}</span>
-                    </div>
+                    <span className="truncate">{groupDisplayName}</span>
                   </button>
 
                   {expandedGroup === group && (
                     <div className="pl-8 pr-3 mt-1 space-y-0.5">
-                      {appGroupsMap[group].filter(appMatchesSearch).map((app) => {
+                      {filteredApps.map((app) => {
                         const { env, ver } = getAppMetadata(app);
-                        const displayName = getAppDisplayName(app);
+                        const childLabel = `${app.namespace}/${app.name}`;
                         return (
                           <div key={`${app.namespace}-${app.name}`} className="group relative">
                             <button
@@ -305,7 +327,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             >
                               <span className={`w-2 h-2 rounded shrink-0 ${app.readyReplicas === app.replicas ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                               <div className="flex flex-col items-start leading-tight overflow-hidden text-left">
-                                <span className="truncate font-medium w-full">{displayName}</span>
+                                <span className="truncate font-medium w-full">{childLabel}</span>
                                 <div className="flex gap-1 mt-0.5 flex-wrap">
                                   {env && (
                                     <span className="text-[7px] font-bold px-1 bg-sky-500/10 text-sky-500 border border-sky-500/20 rounded uppercase leading-none py-0.5">
@@ -332,7 +354,8 @@ const Sidebar: React.FC<SidebarProps> = ({
                     </div>
                   )}
                 </div>
-              ))
+                );
+              })
             )
           ) : (
             namespaces.map((ns) => (
