@@ -88,6 +88,7 @@ export interface LogViewPreferences {
   wrap?: boolean;
   show_timestamp?: boolean;
   show_details?: boolean;
+  show_metrics?: boolean;
 }
 
 export interface ResourceIdentifier {

@@ -46,7 +46,8 @@ const App: React.FC = () => {
     density: 'default',
     wrap: false,
     show_timestamp: true,
-    show_details: true
+    show_details: true,
+    show_metrics: false
   });
 
   // Apply theme to document
@@ -401,7 +402,7 @@ const App: React.FC = () => {
     setSavedViews([]);
     setViewFilters({ logLevel: 'ALL' });
     setActiveViewId(null);
-    setLogViewPrefs({ density: 'default', wrap: false, show_timestamp: true, show_details: true });
+    setLogViewPrefs({ density: 'default', wrap: false, show_timestamp: true, show_details: true, show_metrics: false });
   }, [sessionToken]);
 
   const handleSaveView = useCallback((name: string) => {
@@ -556,6 +557,12 @@ const App: React.FC = () => {
                 >
                   Detail
                 </button>
+                <button
+                  onClick={() => setLogViewPrefs(prev => ({ ...prev, show_metrics: !prev.show_metrics }))}
+                  className={`px-1.5 py-0.5 rounded uppercase font-bold ${logViewPrefs.show_metrics ? 'bg-sky-500/15 text-sky-500' : 'text-slate-400'}`}
+                >
+                  Metrics
+                </button>
                 <select
                   value={logViewPrefs.density || 'default'}
                   onChange={(e) => setLogViewPrefs(prev => ({ ...prev, density: e.target.value as LogViewPreferences['density'] }))}
@@ -620,6 +627,7 @@ const App: React.FC = () => {
                     globalWrap={logViewPrefs.wrap}
                     globalShowTimestamp={logViewPrefs.show_timestamp}
                     globalShowDetails={logViewPrefs.show_details}
+                    globalShowMetrics={logViewPrefs.show_metrics}
                   />
                 </div>
               ))

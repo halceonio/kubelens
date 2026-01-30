@@ -17,6 +17,7 @@ interface LogViewProps {
   globalWrap?: boolean;
   globalShowTimestamp?: boolean;
   globalShowDetails?: boolean;
+  globalShowMetrics?: boolean;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -341,7 +342,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', globalWrap = false, globalShowTimestamp = true, globalShowDetails = true }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', globalWrap = false, globalShowTimestamp = true, globalShowDetails = true, globalShowMetrics = false }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
@@ -813,6 +814,17 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
             <span className="text-[10px] font-bold text-sky-600 dark:text-sky-500 px-1.5 py-0.5 bg-sky-500/10 rounded uppercase">{isApp ? 'App' : 'Pod'}</span>
             <h3 className="text-xs md:text-sm font-mono font-medium text-slate-700 dark:text-slate-200 truncate max-w-[160px] md:max-w-[240px] lg:max-w-[320px]">{resource.name}</h3>
           </div>
+
+          {isApp && globalShowMetrics && (
+            <div className="hidden sm:flex items-center gap-2 text-[9px] font-bold text-slate-500 dark:text-slate-400">
+              <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                CPU {resource.resources?.cpuUsage || '0'} / {resource.resources?.cpuLimit || resource.resources?.cpuRequest || '--'}
+              </span>
+              <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+                MEM {resource.resources?.memUsage || '0'} / {resource.resources?.memLimit || resource.resources?.memRequest || '--'}
+              </span>
+            </div>
+          )}
           
           {availableContainers.length > 1 && (
             <select
