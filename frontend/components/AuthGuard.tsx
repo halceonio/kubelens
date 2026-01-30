@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { AuthUser } from '../types';
 import { MOCK_CONFIG, USE_MOCKS } from '../constants';
 
@@ -69,11 +69,17 @@ const parseJwtClaims = (token: string): JwtClaims | null => {
   }
 };
 
+const isTokenExpired = (claims: JwtClaims | null) => {
+  if (!claims || !claims.exp) return false;
+  return Date.now() / 1000 >= claims.exp;
+};
+
 const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
+  const autoLoginRef = useRef(false);
 
   const buildAuthUrl = (cfg: AuthConfig, state: string, redirectUri: string) => {
     const url = new URL(`${cfg.keycloakUrl}/realms/${cfg.realm}/protocol/openid-connect/auth`);
@@ -87,6 +93,13 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
 
   const setUserFromToken = (token?: string | null) => {
     if (token) {
+      const claims = parseJwtClaims(token);
+      if (isTokenExpired(claims)) {
+        localStorage.removeItem('kubelens_access_token');
+        setUser(null);
+        setError('Session expired. Please sign in again.');
+        return;
+      }
       localStorage.setItem('kubelens_access_token', token);
     }
     const claims = token ? parseJwtClaims(token) : null;
@@ -225,6 +238,24 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
 
     run();
   }, []);
+
+  useEffect(() => {
+    if (autoLoginRef.current) return;
+    if (USE_MOCKS || !authConfig) return;
+
+    if (error && error.toLowerCase().includes('config')) {
+      return;
+    }
+
+    const shouldAutoLogin = !user?.accessToken || (error && error.toLowerCase().includes('token'));
+    if (!shouldAutoLogin) return;
+
+    autoLoginRef.current = true;
+    const newState = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    sessionStorage.setItem('kubelens_oauth_state', newState);
+    const redirectUri = (import.meta as any).env?.VITE_KEYCLOAK_REDIRECT_URI || `${window.location.origin}${window.location.pathname}`;
+    window.location.href = buildAuthUrl(authConfig, newState, redirectUri);
+  }, [authConfig, error, user]);
 
   if (loading) {
     return (

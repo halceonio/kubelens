@@ -13,6 +13,8 @@ interface LogViewProps {
   config?: UiConfig | null;
   initialLogLevel?: LogLevel | 'ALL';
   onLogLevelChange?: (level: LogLevel | 'ALL') => void;
+  initialShowDetails?: boolean;
+  onShowDetailsChange?: (show: boolean) => void;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -329,7 +331,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, initialShowDetails, onShowDetailsChange }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
@@ -345,7 +347,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [isWrapping, setIsWrapping] = useState(false);
   const [showTimestamp, setShowTimestamp] = useState(true);
-  const [showDetails, setShowDetails] = useState(true);
+  const [showDetails, setShowDetails] = useState(initialShowDetails ?? true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'paused' | 'stale'>('connecting');
   const [isPaused, setIsPaused] = useState(false);
@@ -409,6 +411,18 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       setSelectedLevel(initialLogLevel);
     }
   }, [initialLogLevel, resource.name, resource.namespace]);
+
+  useEffect(() => {
+    if (typeof initialShowDetails === 'boolean') {
+      setShowDetails(initialShowDetails);
+    }
+  }, [initialShowDetails]);
+
+  useEffect(() => {
+    if (onShowDetailsChange) {
+      onShowDetailsChange(showDetails);
+    }
+  }, [showDetails, onShowDetailsChange]);
 
   useEffect(() => {
     if (onLogLevelChange) {
