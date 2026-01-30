@@ -15,6 +15,8 @@ GET /api/v1/auth/config
 ```
 This endpoint returns the Keycloak URL, realm, client ID, and allowed groups from the backend config. It does **not** return secrets. The UI caches this response locally for a few minutes and will only fall back to build-time `VITE_KEYCLOAK_*` overrides if the endpoint is unavailable.
 
+> Note: KubeLens expects a `groups` claim in the access token. In Keycloak, add the **Group Membership** mapper (client scope `groups`) to the `kubelens` client and include the `groups` scope in the auth request.
+
 ## Log stream tuning
 ```yaml
 logs:

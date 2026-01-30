@@ -11,6 +11,9 @@ Notes:
 - Requires "Direct Access Grants" enabled for the client.
 - This uses the Resource Owner Password flow (grant_type=password).
 - Output defaults to raw access token; use --json for full response.
+
+Optional:
+  SCOPE="openid email profile groups" (default)
 USAGE
 }
 
@@ -29,6 +32,7 @@ fi
 : "${USERNAME:?USERNAME is required}"
 : "${PASSWORD:?PASSWORD is required}"
 
+SCOPE="${SCOPE:-openid email profile groups}"
 TOKEN_ENDPOINT="${KEYCLOAK_URL%/}/realms/${REALM}/protocol/openid-connect/token"
 
 response=$(curl -sS -X POST "$TOKEN_ENDPOINT" \
@@ -37,7 +41,8 @@ response=$(curl -sS -X POST "$TOKEN_ENDPOINT" \
   --data-urlencode "client_id=${CLIENT_ID}" \
   --data-urlencode "client_secret=${CLIENT_SECRET}" \
   --data-urlencode "username=${USERNAME}" \
-  --data-urlencode "password=${PASSWORD}")
+  --data-urlencode "password=${PASSWORD}" \
+  --data-urlencode "scope=${SCOPE}")
 
 KC_RESPONSE="$response" KC_OUTPUT_JSON="$OUTPUT_JSON" python3 - <<'PY'
 import json

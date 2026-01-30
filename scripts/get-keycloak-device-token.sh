@@ -8,7 +8,7 @@ Usage:
     $0 [--json]
 
 Optional:
-  SCOPE="openid" (default)
+  SCOPE="openid email profile groups" (default)
 
 Notes:
 - Requires "OAuth 2.0 Device Authorization Grant" enabled for the client.
@@ -29,7 +29,7 @@ fi
 : "${CLIENT_ID:?CLIENT_ID is required}"
 : "${CLIENT_SECRET:?CLIENT_SECRET is required}"
 
-SCOPE="${SCOPE:-openid}"
+SCOPE="${SCOPE:-openid email profile groups}"
 
 DEVICE_ENDPOINT="${KEYCLOAK_URL%/}/realms/${REALM}/protocol/openid-connect/auth/device"
 TOKEN_ENDPOINT="${KEYCLOAK_URL%/}/realms/${REALM}/protocol/openid-connect/token"

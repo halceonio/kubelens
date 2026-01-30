@@ -80,7 +80,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
     url.searchParams.set('response_type', 'code');
     url.searchParams.set('client_id', cfg.clientId);
     url.searchParams.set('redirect_uri', redirectUri);
-    url.searchParams.set('scope', 'openid profile email');
+    url.searchParams.set('scope', 'openid profile email groups');
     url.searchParams.set('state', state);
     return url.toString();
   };

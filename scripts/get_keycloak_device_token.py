@@ -45,7 +45,7 @@ def main() -> int:
     realm = require_env("REALM")
     client_id = require_env("CLIENT_ID")
     client_secret = require_env("CLIENT_SECRET")
-    scope = os.environ.get("SCOPE", "openid")
+    scope = os.environ.get("SCOPE", "openid email profile groups")
 
     device_endpoint = f"{keycloak_url.rstrip('/')}/realms/{realm}/protocol/openid-connect/auth/device"
     token_endpoint = f"{keycloak_url.rstrip('/')}/realms/{realm}/protocol/openid-connect/token"
