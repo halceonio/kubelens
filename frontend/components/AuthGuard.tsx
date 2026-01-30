@@ -7,6 +7,27 @@ interface AuthGuardProps {
   onAuth?: (user: AuthUser) => void;
 }
 
+type JwtClaims = {
+  sub?: string;
+  email?: string;
+  preferred_username?: string;
+  groups?: string[];
+};
+
+const parseJwtClaims = (token: string): JwtClaims | null => {
+  try {
+    const parts = token.split('.');
+    if (parts.length < 2) return null;
+    const payload = parts[1].replace(/-/g, '+').replace(/_/g, '/');
+    const padded = payload.padEnd(payload.length + (4 - (payload.length % 4)) % 4, '=');
+    const json = atob(padded);
+    return JSON.parse(json) as JwtClaims;
+  } catch (err) {
+    console.warn('Failed to parse JWT claims', err);
+    return null;
+  }
+};
+
 const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
@@ -19,10 +40,12 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
       if (token) {
         localStorage.setItem('kubelens_access_token', token);
       }
+      const claims = token ? parseJwtClaims(token) : null;
+      const groups = claims?.groups ?? ['k8s-logs-access', 'developers'];
       const authUser: AuthUser = {
-        username: 'dev_user',
-        email: 'dev@enterprise.com',
-        groups: ['k8s-logs-access', 'developers'],
+        username: claims?.preferred_username || claims?.email || claims?.sub || 'dev_user',
+        email: claims?.email || 'dev@enterprise.com',
+        groups,
         isAuthenticated: true,
         accessToken: token
       };

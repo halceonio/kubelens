@@ -1,6 +1,10 @@
 SHELL := /bin/bash
 
-.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview kube-sa keycloak-token keycloak-device-token
+.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py
+
+DEV_CONFIG ?= backend/config.test.yaml
+DEV_KUBECONFIG ?= refs/halceon.yaml
+DEV_FRONTEND_PORT ?= 3000
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "%-22s %s\n", $$1, $$2}'
@@ -26,6 +30,11 @@ frontend-build: ## Build frontend
 
 frontend-preview: ## Preview frontend build
 	cd frontend && npm run preview
+
+dev: ## Run backend + frontend together (Ctrl+C to stop)
+	@bash -c 'set -e; trap "kill 0" EXIT; mkdir -p backend/data; \
+	KUBELENS_CONFIG="$(DEV_CONFIG)" KUBECONFIG="$(DEV_KUBECONFIG)" go run ./backend/cmd/server & \
+	cd frontend && npm run dev -- --host 0.0.0.0 --port $(DEV_FRONTEND_PORT) & wait'
 
 kube-sa: ## Provision service account and export kubeconfig (NS and SA required)
 	@if [ -z "$(NS)" ] || [ -z "$(SA)" ]; then \
