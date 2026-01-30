@@ -444,7 +444,7 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 
 	env := map[string]string{}
 	if len(pod.Spec.Containers) > 0 {
-		env = extractEnv(pod.Namespace, pod.Spec.Containers[0].Env, user, h.client)
+		env = extractEnv(pod.Namespace, pod.Spec.Containers[0].Env, pod.Spec.Containers[0].EnvFrom, user, h.client)
 	}
 
 	return podResponse{
@@ -485,7 +485,7 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment)
 		PodNames:      pods,
 		Labels:        dep.Labels,
 		Annotations:   dep.Annotations,
-		Env:           extractEnv(dep.Namespace, firstEnv(dep.Spec.Template.Spec.Containers), nil, nil),
+		Env:           extractEnv(dep.Namespace, firstEnv(dep.Spec.Template.Spec.Containers), firstEnvFrom(dep.Spec.Template.Spec.Containers), nil, h.client),
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -522,7 +522,7 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 		PodNames:      pods,
 		Labels:        sts.Labels,
 		Annotations:   sts.Annotations,
-		Env:           extractEnv(sts.Namespace, firstEnv(sts.Spec.Template.Spec.Containers), nil, nil),
+		Env:           extractEnv(sts.Namespace, firstEnv(sts.Spec.Template.Spec.Containers), firstEnvFrom(sts.Spec.Template.Spec.Containers), nil, h.client),
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -586,7 +586,7 @@ func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyReso
 		PodNames:      pods,
 		Labels:        dragonfly.Metadata.Labels,
 		Annotations:   dragonfly.Metadata.Annotations,
-		Env:           extractEnv(dragonfly.Metadata.Namespace, dragonfly.Spec.Env, nil, nil),
+		Env:           extractEnv(dragonfly.Metadata.Namespace, dragonfly.Spec.Env, nil, nil, h.client),
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -851,8 +851,54 @@ func firstEnv(containers []corev1.Container) []corev1.EnvVar {
 	return containers[0].Env
 }
 
-func extractEnv(namespace string, envs []corev1.EnvVar, user *auth.User, client *kubernetes.Clientset) map[string]string {
+func firstEnvFrom(containers []corev1.Container) []corev1.EnvFromSource {
+	if len(containers) == 0 {
+		return nil
+	}
+	return containers[0].EnvFrom
+}
+
+func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFromSource, user *auth.User, client *kubernetes.Clientset) map[string]string {
 	result := map[string]string{}
+
+	if client != nil {
+		for _, source := range envFrom {
+			if source.ConfigMapRef != nil && source.ConfigMapRef.Name != "" {
+				data, err := fetchConfigMapData(client, namespace, source.ConfigMapRef.Name)
+				if err != nil {
+					if source.ConfigMapRef.Optional != nil && *source.ConfigMapRef.Optional {
+						continue
+					}
+				} else {
+					for key, value := range data {
+						if key != "" {
+							result[key] = value
+						}
+					}
+				}
+			}
+			if source.SecretRef != nil && source.SecretRef.Name != "" {
+				data, err := fetchSecretData(client, namespace, source.SecretRef.Name)
+				if err != nil {
+					if source.SecretRef.Optional != nil && *source.SecretRef.Optional {
+						continue
+					}
+				} else {
+					for key, value := range data {
+						if key == "" {
+							continue
+						}
+						if user != nil && user.AllowedSecrets {
+							result[key] = string(value)
+						} else {
+							result[key] = "********"
+						}
+					}
+				}
+			}
+		}
+	}
+
 	for _, env := range envs {
 		if env.Value != "" {
 			result[env.Name] = env.Value
@@ -884,6 +930,22 @@ func extractEnv(namespace string, envs []corev1.EnvVar, user *auth.User, client 
 		}
 	}
 	return result
+}
+
+func fetchSecretData(client *kubernetes.Clientset, namespace, name string) (map[string][]byte, error) {
+	secret, err := client.CoreV1().Secrets(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return secret.Data, nil
+}
+
+func fetchConfigMapData(client *kubernetes.Clientset, namespace, name string) (map[string]string, error) {
+	cfg, err := client.CoreV1().ConfigMaps(namespace).Get(context.Background(), name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Data, nil
 }
 
 func fetchSecretValue(client *kubernetes.Clientset, namespace, name, key string) (string, error) {
