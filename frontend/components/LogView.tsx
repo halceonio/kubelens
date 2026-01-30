@@ -278,6 +278,12 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   
   if (!log) return <div style={style} />;
   
+  const rowStyle = {
+    ...style,
+    width: 'max-content',
+    minWidth: '100%'
+  };
+
   const isTerminated = terminatedPods.includes(log.podName);
   const isSelected = selectedIndices.has(index);
   
@@ -286,9 +292,9 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
 
   return (
     <div 
-      style={style} 
+      style={rowStyle} 
       onClick={(e) => onRowClick(index, e)}
-      className={`flex gap-3 md:gap-4 group hover:bg-white/5 px-2 items-start py-1 mono text-[10px] md:text-[11px] leading-tight overflow-x-auto overflow-y-hidden border-b border-white/[0.03] cursor-pointer select-none transition-colors ${
+      className={`flex gap-3 md:gap-4 group hover:bg-white/5 px-2 items-start py-1 mono text-[10px] md:text-[11px] leading-tight border-b border-white/[0.03] cursor-pointer select-none transition-colors ${
         isActiveMatch ? 'bg-sky-500/20 border-sky-500/40' : isSelected ? 'bg-sky-500/30 border-sky-500/50' : isTerminated ? 'opacity-40' : ''
       }`}
     >
@@ -929,7 +935,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
                 height={dimensions.height - 16}
                 itemCount={filteredLogs.length}
                 itemSize={isWrapping ? 54 : 26}
-                width={Math.max(dimensions.width - 16, 800)}
+                width={dimensions.width - 16}
                 className="custom-scrollbar"
                 itemData={rowData}
               >
