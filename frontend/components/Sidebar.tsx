@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
-import { Namespace, Pod, AppResource, ResourceIdentifier } from '../types';
-import { MOCK_NAMESPACES, MOCK_CONFIG, USE_MOCKS } from '../constants';
+import { Namespace, Pod, AppResource, ResourceIdentifier, UiConfig } from '../types';
+import { MOCK_NAMESPACES, DEFAULT_UI_CONFIG, USE_MOCKS } from '../constants';
 import { getPods, getApps, getNamespaces } from '../services/k8sService';
 
 interface SidebarProps {
@@ -13,6 +13,7 @@ interface SidebarProps {
   isOpen: boolean;
   onClose: () => void;
   accessToken?: string | null;
+  config?: UiConfig | null;
 }
 
 type ViewMode = 'groups' | 'pods' | 'apps';
@@ -25,10 +26,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   onTogglePin,
   isOpen,
   onClose,
-  accessToken
+  accessToken,
+  config
 }) => {
+  const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
+  const appGroupsConfig = effectiveConfig.kubernetes.app_groups;
   const [viewMode, setViewMode] = useState<ViewMode>(
-    MOCK_CONFIG.appGroups.enabled ? 'groups' : 'pods'
+    appGroupsConfig.enabled ? 'groups' : 'pods'
   );
   const [namespaces, setNamespaces] = useState<Namespace[]>(USE_MOCKS ? MOCK_NAMESPACES : []);
   const [expandedNamespace, setExpandedNamespace] = useState<string | null>(null);
@@ -83,7 +87,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       setIsAllAppsLoading(true);
       try {
         const all: AppResource[] = [];
-        const targetNamespaces = namespaces.length > 0 ? namespaces.map(n => n.name) : MOCK_CONFIG.allowedNamespaces;
+      const targetNamespaces = namespaces.length > 0 ? namespaces.map(n => n.name) : effectiveConfig.kubernetes.allowed_namespaces;
         for (const ns of targetNamespaces) {
           const nsApps = await getApps(ns, accessToken);
           all.push(...nsApps);
@@ -98,7 +102,7 @@ const Sidebar: React.FC<SidebarProps> = ({
       }
     };
     fetchAllApps();
-  }, [viewMode, namespaces, accessToken]);
+  }, [viewMode, namespaces, accessToken, effectiveConfig.kubernetes.allowed_namespaces]);
 
   useEffect(() => {
     if (!accessToken) {
@@ -131,11 +135,19 @@ const Sidebar: React.FC<SidebarProps> = ({
     setAllApps([]);
   }, [accessToken]);
 
+  useEffect(() => {
+    if (appGroupsConfig.enabled && viewMode === 'pods') {
+      setViewMode('groups');
+    } else if (!appGroupsConfig.enabled && viewMode === 'groups') {
+      setViewMode('pods');
+    }
+  }, [appGroupsConfig.enabled]);
+
   const appGroupsMap = useMemo(() => {
     if (viewMode !== 'groups') return {};
 
-    const selector = MOCK_CONFIG.appGroups.labels.selector;
-    const nameKey = MOCK_CONFIG.appGroups.labels.name;
+    const selector = appGroupsConfig.labels.selector;
+    const nameKey = appGroupsConfig.labels.name;
     const groups: Record<string, { displayName: string; apps: AppResource[] }> = {};
 
     allApps.forEach((app) => {
@@ -155,7 +167,7 @@ const Sidebar: React.FC<SidebarProps> = ({
     });
 
     return groups;
-  }, [allApps, viewMode]);
+  }, [allApps, viewMode, appGroupsConfig]);
 
   const sortedGroupKeys = useMemo(() => {
     return Object.keys(appGroupsMap).sort((a, b) =>
@@ -173,7 +185,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const getAppDisplayName = (app: AppResource) => {
-    const labelKey = MOCK_CONFIG.appGroups.labels.name;
+    const labelKey = appGroupsConfig.labels.name;
     return (
       app.labels?.[labelKey] ||
       app.labels?.['app.kubernetes.io/name'] ||
@@ -191,7 +203,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   };
 
   const getAppMetadata = (app: AppResource) => {
-    const { environment, version } = MOCK_CONFIG.appGroups.labels;
+    const { environment, version } = appGroupsConfig.labels;
     const env = app.labels?.[environment];
     const rawVersion = app.labels?.[version] || app.image;
     const ver = rawVersion?.includes(':') ? rawVersion.split(':').pop() : rawVersion;
@@ -223,7 +235,7 @@ const Sidebar: React.FC<SidebarProps> = ({
 
         <div className="p-4 border-b border-slate-200 dark:border-slate-800 transition-colors duration-200">
           <div className="flex p-1 bg-slate-50 dark:bg-slate-950 rounded-lg border border-slate-200 dark:border-slate-800 mb-4 transition-colors duration-200 overflow-x-auto no-scrollbar">
-            {MOCK_CONFIG.appGroups.enabled && (
+            {appGroupsConfig.enabled && (
               <button 
                 onClick={() => setViewMode('groups')}
                 className={`flex-1 min-w-[80px] py-1.5 text-[9px] font-bold uppercase tracking-wider rounded-md transition-all ${viewMode === 'groups' ? 'bg-white dark:bg-slate-800 text-sky-600 dark:text-sky-400 shadow-sm border border-slate-200 dark:border-slate-700' : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'}`}

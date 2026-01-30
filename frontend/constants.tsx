@@ -29,6 +29,19 @@ export const MOCK_CONFIG = {
   }
 };
 
+export const DEFAULT_UI_CONFIG = {
+  kubernetes: {
+    allowed_namespaces: MOCK_CONFIG.allowedNamespaces,
+    label_prefix: MOCK_CONFIG.label_prefix,
+    app_groups: MOCK_CONFIG.appGroups
+  },
+  logs: {
+    default_tail_lines: 10000,
+    max_tail_lines: 10000,
+    max_line_length: 10000
+  }
+};
+
 export const MOCK_NAMESPACES = [
   { name: 'payment-svc' },
   { name: 'inventory-svc' },

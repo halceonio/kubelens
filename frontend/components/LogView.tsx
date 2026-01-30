@@ -1,9 +1,9 @@
 
 import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
-import { LogEntry, Pod, LogLevel, AppResource } from '../types';
+import { LogEntry, Pod, LogLevel, AppResource, UiConfig } from '../types';
 import { getPodLogs } from '../services/k8sService';
 import * as ReactWindow from 'react-window';
-import { MOCK_CONFIG, USE_MOCKS } from '../constants';
+import { DEFAULT_UI_CONFIG, USE_MOCKS } from '../constants';
 
 // Robustly resolve FixedSizeList from the ESM module wrapper
 const FixedSizeList = (ReactWindow as any).FixedSizeList || (ReactWindow as any).default?.FixedSizeList || (ReactWindow as any).default;
@@ -13,6 +13,7 @@ interface LogViewProps {
   onClose: () => void;
   isMaximized?: boolean;
   accessToken?: string | null;
+  config?: UiConfig | null;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -124,9 +125,10 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
+  const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
   
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<string>('');
@@ -149,12 +151,12 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const containerRef = useRef<HTMLDivElement>(null);
 
   const enterpriseMetadata = useMemo(() => {
-    const prefix = MOCK_CONFIG.label_prefix + '/';
+    const prefix = effectiveConfig.kubernetes.label_prefix ? `${effectiveConfig.kubernetes.label_prefix}/` : '';
     const metadata: Record<string, string> = {};
     const sourceData = { ...(resource.labels || {}), ...(resource.annotations || {}) };
     
     Object.entries(sourceData).forEach(([key, value]) => {
-      if (key.startsWith(prefix)) {
+      if (prefix && key.startsWith(prefix)) {
         const strippedKey = key.substring(prefix.length);
         metadata[strippedKey] = value as string;
       }

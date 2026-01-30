@@ -86,14 +86,17 @@ export interface AppGroupConfig {
   };
 }
 
-export interface Config {
-  keycloakUrl: string;
-  realm: string;
-  clientId: string;
-  allowedNamespaces: string[];
-  podFilterRegex: string;
-  labelPrefix: string;
-  appGroups: AppGroupConfig;
+export interface UiConfig {
+  kubernetes: {
+    allowed_namespaces: string[];
+    label_prefix: string;
+    app_groups: AppGroupConfig;
+  };
+  logs: {
+    default_tail_lines: number;
+    max_tail_lines: number;
+    max_line_length: number;
+  };
 }
 
 export interface AuthUser {

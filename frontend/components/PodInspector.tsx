@@ -1,30 +1,32 @@
 
 import React, { useState, useMemo } from 'react';
-import { Pod, AppResource } from '../types';
-import { MOCK_CONFIG } from '../constants';
+import { Pod, AppResource, UiConfig } from '../types';
+import { DEFAULT_UI_CONFIG } from '../constants';
 
 interface PodInspectorProps {
   resource: Pod | AppResource;
   onClose: () => void;
+  config?: UiConfig | null;
 }
 
 type TabType = 'ENV' | 'LABELS' | 'VOLUMES' | 'RESOURCES' | 'METRICS' | 'PODS';
 
-const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose }) => {
+const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config }) => {
   const [activeTab, setActiveTab] = useState<TabType>('METRICS');
   const isApp = resource && 'type' in resource;
+  const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
 
   if (!resource) return null;
 
   // Extract prefixed metadata for specialized display
   const enterpriseMetadata = useMemo(() => {
-    const prefix = MOCK_CONFIG.label_prefix + '/';
+    const prefix = effectiveConfig.kubernetes.label_prefix ? `${effectiveConfig.kubernetes.label_prefix}/` : '';
     const metadata: Record<string, string> = {};
     
     const sourceData = { ...(resource.labels || {}), ...(resource.annotations || {}) };
     
     Object.entries(sourceData).forEach(([key, value]) => {
-      if (key.startsWith(prefix)) {
+      if (prefix && key.startsWith(prefix)) {
         const strippedKey = key.substring(prefix.length);
         metadata[strippedKey] = value as string;
       }

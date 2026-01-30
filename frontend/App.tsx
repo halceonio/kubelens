@@ -4,9 +4,11 @@ import Sidebar from './components/Sidebar';
 import LogView from './components/LogView';
 import PodInspector from './components/PodInspector';
 import AuthGuard from './components/AuthGuard';
-import { Pod, AppResource, ResourceIdentifier, AuthUser } from './types';
+import { Pod, AppResource, ResourceIdentifier, AuthUser, UiConfig } from './types';
 import { getPodByName, getAppByName } from './services/k8sService';
 import { fetchSession, saveSession, clearSession, SessionPayload } from './services/sessionService';
+import { fetchConfig } from './services/configService';
+import { DEFAULT_UI_CONFIG, USE_MOCKS } from './constants';
 
 const STORAGE_KEY_ACTIVE = 'kubelens_active_resources';
 const STORAGE_KEY_PINNED = 'kubelens_pinned_resources';
@@ -28,6 +30,8 @@ const App: React.FC = () => {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [remoteSession, setRemoteSession] = useState<SessionPayload | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
+  const [uiConfig, setUiConfig] = useState<UiConfig | null>(USE_MOCKS ? DEFAULT_UI_CONFIG : null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [maxPanes, setMaxPanes] = useState(4);
   const [theme, setTheme] = useState<'light' | 'dark'>(getDefaultTheme);
@@ -69,6 +73,37 @@ const App: React.FC = () => {
       .finally(() => {
         if (cancelled) return;
         setSessionReady(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [sessionToken]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!sessionToken) {
+      if (USE_MOCKS) {
+        setUiConfig(DEFAULT_UI_CONFIG);
+        setConfigError(null);
+      } else {
+        setUiConfig(null);
+        setConfigError('Missing access token');
+      }
+      return;
+    }
+
+    fetchConfig(sessionToken)
+      .then((cfg) => {
+        if (cancelled) return;
+        setUiConfig(cfg);
+        setConfigError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        const message = err instanceof Error ? err.message : 'Failed to load config';
+        setConfigError(message);
       });
 
     return () => {
@@ -310,6 +345,7 @@ const App: React.FC = () => {
           pinnedIds={pinnedResources}
           onTogglePin={togglePin}
           accessToken={sessionToken}
+          config={uiConfig}
         />
 
         <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -400,10 +436,15 @@ const App: React.FC = () => {
             </div>
           </header>
 
-          <div className={`flex-1 p-4 overflow-y-auto custom-scrollbar transition-colors duration-200 ${
+          <div className={`flex-1 p-4 overflow-y-auto custom-scrollbar transition-colors duration-200 ${ 
             visibleResources.length === 0 ? 'flex items-center justify-center' :
             'grid grid-cols-1 xl:grid-cols-2 gap-4'
           }`}>
+            {configError && (
+              <div className="absolute top-16 left-4 right-4 z-10 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-500">
+                {configError}
+              </div>
+            )}
             {visibleResources.length === 0 ? (
               <div className="text-center p-6 max-w-md">
                 <div className="w-20 h-20 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl flex items-center justify-center mx-auto mb-6 text-slate-300 dark:text-slate-700 shadow-sm transition-colors duration-200">
@@ -420,6 +461,7 @@ const App: React.FC = () => {
                     onClose={() => closeResource(res.name)}
                     isMaximized={visibleResources.length === 1}
                     accessToken={sessionToken}
+                    config={uiConfig}
                   />
                 </div>
               ))
@@ -434,7 +476,13 @@ const App: React.FC = () => {
           )}
         </main>
 
-        {inspectingResource && <PodInspector resource={inspectingResource} onClose={() => setInspectingResource(null)} />}
+        {inspectingResource && (
+          <PodInspector
+            resource={inspectingResource}
+            onClose={() => setInspectingResource(null)}
+            config={uiConfig}
+          />
+        )}
       </div>
     </AuthGuard>
   );
