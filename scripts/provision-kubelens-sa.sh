@@ -10,6 +10,7 @@ fi
 NAMESPACE="$1"
 SERVICEACCOUNT="$2"
 OUTPUT="${3:-./kubelens-${NAMESPACE}.kubeconfig}"
+ROLE_NAME="${SERVICEACCOUNT}-${NAMESPACE}-reader"
 
 kubectl get namespace "${NAMESPACE}" >/dev/null
 
@@ -21,10 +22,9 @@ metadata:
   namespace: ${NAMESPACE}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
+kind: ClusterRole
 metadata:
-  name: ${SERVICEACCOUNT}-reader
-  namespace: ${NAMESPACE}
+  name: ${ROLE_NAME}
 rules:
   - apiGroups: [""]
     resources:
@@ -35,18 +35,17 @@ rules:
     verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
+kind: ClusterRoleBinding
 metadata:
-  name: ${SERVICEACCOUNT}-reader
-  namespace: ${NAMESPACE}
+  name: ${ROLE_NAME}
 subjects:
   - kind: ServiceAccount
     name: ${SERVICEACCOUNT}
     namespace: ${NAMESPACE}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: ${SERVICEACCOUNT}-reader
+  kind: ClusterRole
+  name: ${ROLE_NAME}
 EOF_MANIFEST
 
 CONTEXT=$(kubectl config current-context)
