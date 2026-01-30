@@ -1,0 +1,66 @@
+image:
+  repository: halceon/kubelens
+  tag: latest
+  pullPolicy: IfNotPresent
+
+service:
+  type: ClusterIP
+  port: 80
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  create: true
+
+config:
+  existingSecret: ""
+  auth:
+    keycloakUrl: "https://keycloak.example.com"
+    realm: "monitoring"
+    clientId: "kubelens"
+    clientSecret: ""
+    allowedGroups:
+      - "k8s-logs-access"
+    allowedSecretsGroups:
+      - "k8s-admin-access"
+  logs:
+    defaultTailLines: 10000
+    maxTailLines: 10000
+    maxLineLength: 10000
+  session:
+    maxBytes: 262144
+  storage:
+    databaseUrl: ""
+  cache:
+    enabled: false
+    redisUrl: ""
+  kubernetes:
+    clusterName: "monitoring"
+    terminatedLogTtl: 3600
+    api:
+      burst: 200
+      qps: 100
+    allowedNamespaces:
+      - "monitoring"
+    appGroups:
+      enabled: true
+      labels:
+        selector: "app.sgz.ai/group"
+        name: "app.sgz.ai/displayname"
+        environment: "app.sgz.ai/env"
+        version: "app.sgz.ai/version"
+    podFilters:
+      includeRegex: ".*"
+      excludeLabels: []
+    appFilters:
+      includeRegex: ".*"
+      excludeLabels: []
+    labelPrefix: "app.sgz.ai"
+
+kubeconfig:
+  existingSecret: ""
+  key: kubeconfig
+
+resources: {}

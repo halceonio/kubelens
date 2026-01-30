@@ -1,0 +1,53 @@
+server:
+  address: ":8080"
+  read_timeout_seconds: 10
+  write_timeout_seconds: 30
+  idle_timeout_seconds: 60
+
+auth:
+  keycloak_url: "https://keycloak.example.com"
+  realm: "platforms"
+  client_id: "kubelens"
+  client_secret: "__CLIENT_SECRET__"
+  allowed_groups:
+    - "k8s-logs-access"
+  allowed_secrets_groups:
+    - "k8s-admin-access"
+
+logs:
+  default_tail_lines: 10000
+  max_tail_lines: 10000
+  max_line_length: 10000
+
+session:
+  max_bytes: 262144
+
+storage:
+  database_url: ""
+
+cache:
+  enabled: false
+  redis_url: ""
+
+kubernetes:
+  cluster_name: "monitoring"
+  terminated_log_ttl: 3600
+  api:
+    burst: 200
+    qps: 100
+  allowed_namespaces:
+    - "monitoring"
+  app_groups:
+    enabled: true
+    labels:
+      selector: "app.sgz.ai/group"
+      name: "app.sgz.ai/displayname"
+      environment: "app.sgz.ai/env"
+      version: "app.sgz.ai/version"
+  pod_filters:
+    include_regex: ".*"
+    exclude_labels: []
+  app_filters:
+    include_regex: ".*"
+    exclude_labels: []
+  label_prefix: "app.sgz.ai"

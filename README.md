@@ -128,6 +128,8 @@ kubernetes:
 - `docs/deploy.md` deployment guide
 - `docs/github-pages.md` publishing instructions
 - Preview docs locally: `make docs-preview`
+- Helm chart: `charts/kubelens`
+- Kustomize manifests: `deploy/`
 
 ## License
 Internal use only.

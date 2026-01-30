@@ -33,3 +33,17 @@ docker compose -f docker/docker-compose.yml up --build
 - Run the container as a single pod behind a Service.
 - Mount the config file via ConfigMap and the kubeconfig via Secret.
 - Keep the pod read-only: no cluster write permissions.
+
+## Helm (namespace: monitoring)
+```bash
+helm install kubelens charts/kubelens -n monitoring --create-namespace
+```
+
+Update values (Keycloak + namespaces) in `charts/kubelens/values.yaml` or with `--set`.
+
+## Kustomize (namespace: monitoring)
+```bash
+kubectl apply -k deploy
+```
+
+Edit `deploy/config/kubelens-config.yaml` to match your Keycloak and namespace allowlist before applying.

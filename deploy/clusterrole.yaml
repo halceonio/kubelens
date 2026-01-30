@@ -1,0 +1,17 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: kubelens
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "pods/log", "configmaps", "secrets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["dragonflydb.io"]
+    resources: ["dragonflies"]
+    verbs: ["get", "list", "watch"]
