@@ -8,6 +8,9 @@ DEV_FRONTEND_PORT ?= 3000
 ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
 DEV_CONFIG_ABS := $(abspath $(DEV_CONFIG))
 DEV_KUBECONFIG_ABS := $(abspath $(DEV_KUBECONFIG))
+REGISTRY ?= halceon
+REGISTRY_ALT ?= nudevco
+DOCKER_TAG ?= latest
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "%-22s %s\n", $$1, $$2}'
@@ -64,3 +67,16 @@ keycloak-device-token: ## Fetch a Keycloak access token via device authorization
 
 keycloak-device-token-py: ## Fetch a Keycloak access token via device flow (python)
 	uv run ./scripts/get_keycloak_device_token.py
+
+
+.PHONY: docker-build
+docker-build: ## Build and push Docker image to registry
+	@docker buildx build \
+		--platform linux/amd64 \
+		--builder cloud-nudevco-default \
+		-t $(REGISTRY)/kubelens:$(DOCKER_TAG) \
+		-t $(REGISTRY_ALT)/kubelens:$(DOCKER_TAG) \
+		--build-arg VITE_USE_MOCKS=false \
+		-f docker/Dockerfile \
+		--push .
+	

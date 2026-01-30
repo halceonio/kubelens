@@ -1,0 +1,54 @@
+name: Build Image - Production
+
+on:
+  workflow_dispatch:
+  # push:
+  #   branches:
+  #     - main
+  #   paths:
+  #     - '!**/*lock*'
+  #     - 'backend/**'
+  
+env:
+  HUSKY: 0
+  DOCKER_REGISTRY: halceon
+  DOCKER_REPO: kubelens
+
+jobs:
+  docker-build:
+    runs-on: ubuntu-latest
+    if: github.actor != 'dependabot[bot]'
+    permissions:
+      contents: read
+      id-token: write
+      packages: write
+    
+    steps:
+      - name: Setup CICD Actions
+        uses: AI-Hivemind/actions@main
+        id: actions
+        with:
+          username: ${{ secrets.DOCKER_USERNAME }}
+          password: ${{ secrets.DOCKER_PASSWORD }}
+          semantic_version_enabled: 'true'
+      
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+
+      - name: Build and Push KubeLens
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile
+          push: true
+          platforms: linux/amd64
+          tags: |
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
+            ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.actions.outputs.semantic_version_tag }}
+          build-args: |
+            VITE_USE_MOCKS=false
