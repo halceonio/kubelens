@@ -1,0 +1,3 @@
+# Do not bake local env files into images
+frontend/.env
+frontend/.env.*
