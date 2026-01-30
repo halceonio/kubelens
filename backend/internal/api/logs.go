@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -20,42 +21,51 @@ import (
 )
 
 type KubeHandler struct {
-	cfg    *config.Config
-	client *kubernetes.Clientset
+	cfg        *config.Config
+	client     *kubernetes.Clientset
+	podInclude *regexp.Regexp
+	appInclude *regexp.Regexp
+	podExclude []labelFilter
+	appExclude []labelFilter
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandler {
-	return &KubeHandler{cfg: cfg, client: client}
+	return &KubeHandler{
+		cfg:        cfg,
+		client:     client,
+		podInclude: compileRegex(cfg.Kubernetes.PodFilters.IncludeRegex),
+		appInclude: compileRegex(cfg.Kubernetes.AppFilters.IncludeRegex),
+		podExclude: parseLabelFilters(cfg.Kubernetes.PodFilters.ExcludeLabels),
+		appExclude: parseLabelFilters(cfg.Kubernetes.AppFilters.ExcludeLabels),
+	}
 }
 
 func (h *KubeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	path := strings.TrimPrefix(r.URL.Path, "/api/v1/namespaces/")
-	parts := strings.Split(strings.Trim(path, "/"), "/")
-	if len(parts) < 4 {
+	if r.URL.Path == "/api/v1/namespaces" || r.URL.Path == "/api/v1/namespaces/" {
+		h.handleNamespaces(w, r)
+		return
+	}
+
+	path := strings.TrimPrefix(r.URL.Path, "/api/v1/namespaces")
+	path = strings.Trim(path, "/")
+	parts := strings.Split(path, "/")
+	if len(parts) < 2 {
 		http.NotFound(w, r)
 		return
 	}
 
 	ns := parts[0]
-	resourceType := parts[1]
-	name := parts[2]
-	subresource := parts[3]
-
-	if subresource != "logs" {
-		http.NotFound(w, r)
-		return
-	}
-
 	if !h.isAllowedNamespace(ns) {
 		writeError(w, http.StatusForbidden, "namespace not allowed")
 		return
 	}
 
+	resourceType := parts[1]
 	switch resourceType {
 	case "pods":
-		h.streamPodLogs(w, r, ns, name)
+		h.handlePods(w, r, ns, parts[2:])
 	case "apps":
-		h.streamAppLogs(w, r, ns, name)
+		h.handleApps(w, r, ns, parts[2:])
 	default:
 		http.NotFound(w, r)
 	}
@@ -211,6 +221,9 @@ func (h *KubeHandler) parseLogLine(line, podName, containerName string) logEntry
 		if parsed, err := time.Parse(time.RFC3339Nano, ts); err == nil {
 			timestamp = parsed.UTC().Format(time.RFC3339Nano)
 			message = strings.TrimSpace(line[idx+1:])
+		} else if parsed, err := time.Parse(time.RFC3339, ts); err == nil {
+			timestamp = parsed.UTC().Format(time.RFC3339Nano)
+			message = strings.TrimSpace(line[idx+1:])
 		}
 	}
 
@@ -278,50 +291,6 @@ func (h *KubeHandler) isAllowedNamespace(ns string) bool {
 }
 
 var errAppNotFound = errors.New("app not found")
-
-func (h *KubeHandler) listPodsForApp(ctx context.Context, namespace, name string) ([]string, error) {
-	selector, err := h.appSelector(ctx, namespace, name)
-	if err != nil {
-		return nil, err
-	}
-	if selector == "" {
-		return nil, errAppNotFound
-	}
-	pods, err := h.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
-	if err != nil {
-		return nil, err
-	}
-
-	podNames := make([]string, 0, len(pods.Items))
-	for _, pod := range pods.Items {
-		podNames = append(podNames, pod.Name)
-	}
-	return podNames, nil
-}
-
-func (h *KubeHandler) appSelector(ctx context.Context, namespace, name string) (string, error) {
-	deployment, err := h.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
-		return selectorString(deployment.Spec.Selector), nil
-	}
-
-	statefulSet, err := h.client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
-	if err == nil {
-		return selectorString(statefulSet.Spec.Selector), nil
-	}
-
-	return "", errAppNotFound
-}
-
-func selectorString(selector *metav1.LabelSelector) string {
-	if selector == nil {
-		return ""
-	}
-	if s, err := metav1.LabelSelectorAsSelector(selector); err == nil {
-		return s.String()
-	}
-	return ""
-}
 
 func setSSEHeaders(w http.ResponseWriter) {
 	w.Header().Set("Content-Type", "text/event-stream")

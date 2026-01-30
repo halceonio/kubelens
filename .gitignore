@@ -47,5 +47,8 @@ wheels/
 backend/.env
 
 refs/exts/*
+refs/kubelens-test.kubeconfig
+/backend/data/
+/backend/server
 /.playwright-mcp
 *.log

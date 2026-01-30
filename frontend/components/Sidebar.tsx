@@ -2,7 +2,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { Namespace, Pod, AppResource, ResourceIdentifier } from '../types';
 import { MOCK_NAMESPACES, MOCK_CONFIG } from '../constants';
-import { getPods, getApps } from '../services/k8sService';
+import { getPods, getApps, getNamespaces } from '../services/k8sService';
 
 interface SidebarProps {
   onPodSelect: (pod: Pod) => void;
@@ -12,6 +12,7 @@ interface SidebarProps {
   onTogglePin: (id: ResourceIdentifier) => void;
   isOpen: boolean;
   onClose: () => void;
+  accessToken?: string | null;
 }
 
 type ViewMode = 'groups' | 'pods' | 'apps';
@@ -23,12 +24,13 @@ const Sidebar: React.FC<SidebarProps> = ({
   pinnedIds,
   onTogglePin,
   isOpen,
-  onClose
+  onClose,
+  accessToken
 }) => {
   const [viewMode, setViewMode] = useState<ViewMode>(
     MOCK_CONFIG.appGroups.enabled ? 'groups' : 'pods'
   );
-  const [namespaces] = useState<Namespace[]>(MOCK_NAMESPACES);
+  const [namespaces, setNamespaces] = useState<Namespace[]>(MOCK_NAMESPACES);
   const [expandedNamespace, setExpandedNamespace] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   
@@ -53,10 +55,10 @@ const Sidebar: React.FC<SidebarProps> = ({
     setExpandedNamespace(ns);
     setLoading(ns);
     if (viewMode === 'pods' && !pods[ns]) {
-      const nsPods = await getPods(ns);
+      const nsPods = await getPods(ns, accessToken);
       setPods(prev => ({ ...prev, [ns]: nsPods }));
     } else if (viewMode === 'apps' && !apps[ns]) {
-      const nsApps = await getApps(ns);
+      const nsApps = await getApps(ns, accessToken);
       setApps(prev => ({ ...prev, [ns]: nsApps }));
     }
     setLoading(null);
@@ -73,15 +75,32 @@ const Sidebar: React.FC<SidebarProps> = ({
       
       setIsAllAppsLoading(true);
       const all: AppResource[] = [];
-      for (const ns of MOCK_CONFIG.allowedNamespaces) {
-        const nsApps = await getApps(ns);
+      const targetNamespaces = namespaces.length > 0 ? namespaces.map(n => n.name) : MOCK_CONFIG.allowedNamespaces;
+      for (const ns of targetNamespaces) {
+        const nsApps = await getApps(ns, accessToken);
         all.push(...nsApps);
       }
       setAllApps(all);
       setIsAllAppsLoading(false);
     };
     fetchAllApps();
-  }, [viewMode]);
+  }, [viewMode, namespaces, accessToken]);
+
+  useEffect(() => {
+    if (!accessToken) {
+      setNamespaces(MOCK_NAMESPACES);
+      return;
+    }
+    getNamespaces(accessToken)
+      .then((data) => {
+        if (data && data.length > 0) {
+          setNamespaces(data);
+        }
+      })
+      .catch((err) => {
+        console.warn('Failed to load namespaces', err);
+      });
+  }, [accessToken]);
 
   const appGroupsMap = useMemo(() => {
     if (viewMode !== 'groups') return {};

@@ -34,7 +34,9 @@ func New(cfg *config.Config, verifier *auth.Verifier, client *kubernetes.Clients
 
 	sessionHandler := api.NewSessionHandler(sessions, cfg.Session.MaxBytes)
 	mux.Handle("/api/v1/session", auth.Middleware(verifier)(sessionHandler))
-	mux.Handle("/api/v1/namespaces/", auth.Middleware(verifier)(api.NewKubeHandler(cfg, client)))
+	kubeHandler := auth.Middleware(verifier)(api.NewKubeHandler(cfg, client))
+	mux.Handle("/api/v1/namespaces", kubeHandler)
+	mux.Handle("/api/v1/namespaces/", kubeHandler)
 
 	server := &http.Server{
 		Addr:         cfg.Server.Address,

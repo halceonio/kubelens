@@ -1,6 +1,21 @@
 
-import { Pod, LogEntry, LogLevel, Container, AppResource } from '../types';
+import { Pod, LogEntry, LogLevel, AppResource, Namespace } from '../types';
 import { MOCK_PODS } from '../constants';
+
+const API_BASE = '/api/v1';
+
+const buildHeaders = (token?: string | null) => {
+  if (!token) return {};
+  return { Authorization: `Bearer ${token}` };
+};
+
+const fetchJSON = async <T>(url: string, token?: string | null): Promise<T> => {
+  const res = await fetch(url, { headers: buildHeaders(token) });
+  if (!res.ok) {
+    throw new Error(`Request failed: ${res.status}`);
+  }
+  return res.json();
+};
 
 const generateMockLog = (podName: string, containerName: string, minutesOffset: number = 0): LogEntry => {
   const levels: LogLevel[] = ['INFO', 'INFO', 'INFO', 'WARNING', 'ERROR'];
@@ -31,7 +46,25 @@ const generateMockLog = (podName: string, containerName: string, minutesOffset: 
   };
 };
 
-export const getPods = async (namespace: string): Promise<Pod[]> => {
+export const getNamespaces = async (token?: string | null): Promise<Namespace[]> => {
+  if (token) {
+    try {
+      return await fetchJSON<Namespace[]>(`${API_BASE}/namespaces`, token);
+    } catch (err) {
+      console.warn('Failed to load namespaces from backend', err);
+    }
+  }
+  return [];
+};
+
+export const getPods = async (namespace: string, token?: string | null): Promise<Pod[]> => {
+  if (token) {
+    try {
+      return await fetchJSON<Pod[]>(`${API_BASE}/namespaces/${namespace}/pods`, token);
+    } catch (err) {
+      console.warn('Failed to load pods from backend', err);
+    }
+  }
   return new Promise((resolve) => {
     setTimeout(() => {
       const basePods = (MOCK_PODS[namespace] || []) as any[];
@@ -67,12 +100,26 @@ export const getPods = async (namespace: string): Promise<Pod[]> => {
   });
 };
 
-export const getPodByName = async (namespace: string, name: string): Promise<Pod | null> => {
+export const getPodByName = async (namespace: string, name: string, token?: string | null): Promise<Pod | null> => {
+  if (token) {
+    try {
+      return await fetchJSON<Pod>(`${API_BASE}/namespaces/${namespace}/pods/${name}`, token);
+    } catch (err) {
+      console.warn('Failed to load pod from backend', err);
+    }
+  }
   const pods = await getPods(namespace);
   return pods.find(p => p.name === name) || null;
 };
 
-export const getApps = async (namespace: string): Promise<AppResource[]> => {
+export const getApps = async (namespace: string, token?: string | null): Promise<AppResource[]> => {
+  if (token) {
+    try {
+      return await fetchJSON<AppResource[]>(`${API_BASE}/namespaces/${namespace}/apps`, token);
+    } catch (err) {
+      console.warn('Failed to load apps from backend', err);
+    }
+  }
   return new Promise((resolve) => {
     setTimeout(() => {
       const apps: AppResource[] = [
@@ -144,7 +191,14 @@ export const getApps = async (namespace: string): Promise<AppResource[]> => {
   });
 };
 
-export const getAppByName = async (namespace: string, name: string): Promise<AppResource | null> => {
+export const getAppByName = async (namespace: string, name: string, token?: string | null): Promise<AppResource | null> => {
+  if (token) {
+    try {
+      return await fetchJSON<AppResource>(`${API_BASE}/namespaces/${namespace}/apps/${name}`, token);
+    } catch (err) {
+      console.warn('Failed to load app from backend', err);
+    }
+  }
   const apps = await getApps(namespace);
   return apps.find(a => a.name === name) || null;
 };

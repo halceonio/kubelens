@@ -227,8 +227,8 @@ const App: React.FC = () => {
         for (const id of idsToRestore.slice(0, 4)) {
           try {
             const res = id.type === 'pod' 
-              ? await getPodByName(id.namespace, id.name)
-              : await getAppByName(id.namespace, id.name);
+              ? await getPodByName(id.namespace, id.name, sessionToken)
+              : await getAppByName(id.namespace, id.name, sessionToken);
             if (res) restored.push(res);
           } catch (e) {
             console.warn(`Failed to restore ${id.name}`, e);
@@ -307,6 +307,7 @@ const App: React.FC = () => {
           activeResourceNames={activeResources.map(p => p.name)}
           pinnedIds={pinnedResources}
           onTogglePin={togglePin}
+          accessToken={sessionToken}
         />
 
         <main className="flex-1 flex flex-col relative overflow-hidden">
