@@ -40,8 +40,109 @@ type ParsedEvent =
   | { kind: 'stats'; stats: StreamStats }
   | { kind: 'heartbeat' };
 
+const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
+
+const stripAnsi = (message: string) => message.replace(ANSI_REGEX, '');
+
+const ANSI_COLORS = [
+  '#000000',
+  '#cc0000',
+  '#4e9a06',
+  '#c4a000',
+  '#3465a4',
+  '#75507b',
+  '#06989a',
+  '#d3d7cf'
+];
+
+const ANSI_BRIGHT_COLORS = [
+  '#555753',
+  '#ef2929',
+  '#8ae234',
+  '#fce94f',
+  '#729fcf',
+  '#ad7fa8',
+  '#34e2e2',
+  '#eeeeec'
+];
+
+type AnsiSegment = {
+  text: string;
+  style: React.CSSProperties;
+};
+
+const parseAnsiSegments = (input: string): AnsiSegment[] => {
+  const segments: AnsiSegment[] = [];
+  const regex = /\x1b\[([0-9;]*)m/g;
+  let lastIndex = 0;
+  let match: RegExpExecArray | null;
+  let style: React.CSSProperties = {};
+
+  const pushText = (text: string) => {
+    if (!text) return;
+    segments.push({ text, style: { ...style } });
+  };
+
+  while ((match = regex.exec(input)) !== null) {
+    if (match.index > lastIndex) {
+      pushText(input.slice(lastIndex, match.index));
+    }
+
+    const codes = match[1]
+      .split(';')
+      .filter(Boolean)
+      .map((val) => Number(val));
+
+    if (codes.length === 0) {
+      style = {};
+    }
+
+    for (const code of codes) {
+      if (Number.isNaN(code)) continue;
+      if (code === 0) {
+        style = {};
+      } else if (code === 1) {
+        style.fontWeight = 600;
+      } else if (code === 2) {
+        style.opacity = 0.7;
+      } else if (code === 3) {
+        style.fontStyle = 'italic';
+      } else if (code === 4) {
+        style.textDecoration = 'underline';
+      } else if (code === 22) {
+        style.fontWeight = undefined;
+        style.opacity = undefined;
+      } else if (code === 23) {
+        style.fontStyle = undefined;
+      } else if (code === 24) {
+        style.textDecoration = undefined;
+      } else if (code === 39) {
+        style.color = undefined;
+      } else if (code === 49) {
+        style.backgroundColor = undefined;
+      } else if (code >= 30 && code <= 37) {
+        style.color = ANSI_COLORS[code - 30];
+      } else if (code >= 90 && code <= 97) {
+        style.color = ANSI_BRIGHT_COLORS[code - 90];
+      } else if (code >= 40 && code <= 47) {
+        style.backgroundColor = ANSI_COLORS[code - 40];
+      } else if (code >= 100 && code <= 107) {
+        style.backgroundColor = ANSI_BRIGHT_COLORS[code - 100];
+      }
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  if (lastIndex < input.length) {
+    pushText(input.slice(lastIndex));
+  }
+
+  return segments;
+};
+
 const deriveLevel = (message: string): LogLevel => {
-  const lower = message.toLowerCase();
+  const lower = stripAnsi(message).toLowerCase();
   if (lower.includes('error') || lower.includes('failed') || lower.includes('exception')) return 'ERROR';
   if (lower.includes('warn')) return 'WARNING';
   if (lower.includes('debug')) return 'DEBUG';
@@ -131,6 +232,45 @@ const highlightText = (text: string, query: string) => {
   return output;
 };
 
+const renderAnsiWithHighlight = (text: string, query: string) => {
+  const segments = parseAnsiSegments(text);
+  if (!query) {
+    return segments.map((segment, idx) => (
+      <span key={`ansi-${idx}`} style={segment.style}>
+        {segment.text}
+      </span>
+    ));
+  }
+  const regex = new RegExp(escapeRegExp(query), 'ig');
+  return segments.map((segment, idx) => {
+    const matches = segment.text.match(regex);
+    if (!matches) {
+      return (
+        <span key={`ansi-${idx}`} style={segment.style}>
+          {segment.text}
+        </span>
+      );
+    }
+    const parts = segment.text.split(regex);
+    const nodes: React.ReactNode[] = [];
+    parts.forEach((part, partIdx) => {
+      nodes.push(part);
+      if (matches[partIdx]) {
+        nodes.push(
+          <mark key={`ansi-${idx}-mark-${partIdx}`} className="bg-sky-500/30 text-slate-100 rounded px-0.5">
+            {matches[partIdx]}
+          </mark>
+        );
+      }
+    });
+    return (
+      <span key={`ansi-${idx}`} style={segment.style}>
+        {nodes}
+      </span>
+    );
+  });
+};
+
 const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSProperties; data: RowData }) => {
   const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, isApp, isWrapping, searchQuery, activeMatchIndex } = data;
   const log = logs[index];
@@ -180,7 +320,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
       </div>
       
       <span className={`pt-0.5 ${isWrapping ? 'whitespace-normal break-all' : 'truncate'} ${isMarker ? 'text-sky-300 italic' : isTerminated ? 'text-slate-500 italic' : 'text-slate-300'}`}>
-        {highlightText(log.message, searchQuery)}
+        {renderAnsiWithHighlight(log.message, searchQuery)}
       </span>
     </div>
   );
@@ -473,7 +613,8 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         if (!selectedPods.includes(log.podName)) return false;
         if (selectedLevel !== 'ALL' && log.level !== selectedLevel) return false;
       }
-      if (filter && !log.message.toLowerCase().includes(filter.toLowerCase())) return false;
+      const message = stripAnsi(log.message);
+      if (filter && !message.toLowerCase().includes(filter.toLowerCase())) return false;
       if (timeFilter !== 'all') {
         const logTime = new Date(log.timestamp).getTime();
         const diffMinutes = (now - logTime) / 1000 / 60;
@@ -489,7 +630,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     const query = searchQuery.toLowerCase();
     const indices: number[] = [];
     filteredLogs.forEach((log, idx) => {
-      if (log.message.toLowerCase().includes(query)) {
+      if (stripAnsi(log.message).toLowerCase().includes(query)) {
         indices.push(idx);
       }
     });
