@@ -808,17 +808,33 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       }}
     >
       <div className="bg-white dark:bg-slate-900 px-3 md:px-4 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2 md:gap-3 transition-colors duration-200">
-        <div className="flex items-center gap-2 md:gap-3">
+        <div className="flex items-center gap-2 md:gap-3 min-w-0">
           <div className="flex items-center gap-1.5 md:gap-2 pr-2 md:pr-3 border-r border-slate-200 dark:border-slate-700">
             <span className="text-[10px] font-bold text-sky-600 dark:text-sky-500 px-1.5 py-0.5 bg-sky-500/10 rounded uppercase">{isApp ? 'App' : 'Pod'}</span>
-            <h3 className="text-xs md:text-sm font-mono font-medium text-slate-700 dark:text-slate-200 truncate max-w-[100px] md:max-w-[140px]">{resource.name}</h3>
+            <h3 className="text-xs md:text-sm font-mono font-medium text-slate-700 dark:text-slate-200 truncate max-w-[160px] md:max-w-[240px] lg:max-w-[320px]">{resource.name}</h3>
           </div>
+          
+          {availableContainers.length > 1 && (
+            <select
+              value={selectedContainer}
+              onChange={(e) => setSelectedContainer(e.target.value)}
+              className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] md:text-[10px] font-bold text-slate-600 dark:text-slate-300 rounded px-2 py-1"
+            >
+              {availableContainers.map((container) => (
+                <option key={container} value={container}>
+                  {container}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
 
+        <div className="flex items-center gap-2">
           <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
             <span className={`w-1.5 h-1.5 rounded-full ${streamMeta.color}`}></span>
             <span className={`text-[9px] font-bold uppercase tracking-wide ${streamMeta.text}`}>{streamMeta.label}</span>
           </div>
-          
+
           {isApp && (
             <div className="relative" ref={dropdownRef}>
               <button 
@@ -832,7 +848,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               </button>
               
               {isPodDropdownOpen && (
-                <div className="absolute top-full left-0 mt-1 w-64 md:w-72 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl dark:shadow-2xl z-[60] overflow-hidden transition-colors duration-200">
+                <div className="absolute top-full right-0 mt-1 w-64 md:w-72 bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl dark:shadow-2xl z-[60] overflow-hidden transition-colors duration-200">
                   <div className="p-2 border-b border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-900/50 flex justify-between items-center px-3">
                     <span className="text-[9px] font-bold text-slate-400 dark:text-slate-500 uppercase">Pods</span>
                     <button 
@@ -871,22 +887,6 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
             </div>
           )}
 
-          {availableContainers.length > 1 && (
-            <select
-              value={selectedContainer}
-              onChange={(e) => setSelectedContainer(e.target.value)}
-              className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] md:text-[10px] font-bold text-slate-600 dark:text-slate-300 rounded px-2 py-1"
-            >
-              {availableContainers.map((container) => (
-                <option key={container} value={container}>
-                  {container}
-                </option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        <div className="flex items-center gap-2">
           <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-slate-700 transition-colors duration-200">
             {['ALL', 'INFO', 'WARN', 'ERR'].map(level => (
               <button
