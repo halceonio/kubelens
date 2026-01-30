@@ -8,10 +8,10 @@ import (
 
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/halceon/kubelens/backend/internal/api"
-	"github.com/halceon/kubelens/backend/internal/auth"
-	"github.com/halceon/kubelens/backend/internal/config"
-	"github.com/halceon/kubelens/backend/internal/storage"
+	"github.com/halceonio/kubelens/backend/internal/api"
+	"github.com/halceonio/kubelens/backend/internal/auth"
+	"github.com/halceonio/kubelens/backend/internal/config"
+	"github.com/halceonio/kubelens/backend/internal/storage"
 )
 
 type Server struct {

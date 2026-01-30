@@ -9,11 +9,11 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/halceon/kubelens/backend/internal/auth"
-	"github.com/halceon/kubelens/backend/internal/config"
-	"github.com/halceon/kubelens/backend/internal/k8s"
-	"github.com/halceon/kubelens/backend/internal/server"
-	"github.com/halceon/kubelens/backend/internal/storage"
+	"github.com/halceonio/kubelens/backend/internal/auth"
+	"github.com/halceonio/kubelens/backend/internal/config"
+	"github.com/halceonio/kubelens/backend/internal/k8s"
+	"github.com/halceonio/kubelens/backend/internal/server"
+	"github.com/halceonio/kubelens/backend/internal/storage"
 )
 
 func main() {

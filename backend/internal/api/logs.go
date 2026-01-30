@@ -16,7 +16,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
-	"github.com/halceon/kubelens/backend/internal/config"
+	"github.com/halceonio/kubelens/backend/internal/config"
 )
 
 type KubeHandler struct {

@@ -6,7 +6,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
-	"github.com/halceon/kubelens/backend/internal/config"
+	"github.com/halceonio/kubelens/backend/internal/config"
 )
 
 func NewClient(cfg config.KubernetesConfig) (*kubernetes.Clientset, error) {

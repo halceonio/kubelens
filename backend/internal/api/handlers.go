@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/halceon/kubelens/backend/internal/auth"
-	"github.com/halceon/kubelens/backend/internal/storage"
+	"github.com/halceonio/kubelens/backend/internal/auth"
+	"github.com/halceonio/kubelens/backend/internal/storage"
 )
 
 const sessionVersion = 1

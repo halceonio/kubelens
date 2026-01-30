@@ -12,7 +12,7 @@ import (
 	"github.com/MicahParks/keyfunc/v3"
 	"github.com/golang-jwt/jwt/v5"
 
-	"github.com/halceon/kubelens/backend/internal/config"
+	"github.com/halceonio/kubelens/backend/internal/config"
 )
 
 var (

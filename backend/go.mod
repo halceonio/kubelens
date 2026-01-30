@@ -1,4 +1,4 @@
-module github.com/halceon/kubelens/backend
+module github.com/halceonio/kubelens/backend
 
 go 1.25.4
 

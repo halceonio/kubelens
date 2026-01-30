@@ -9,7 +9,7 @@ import (
 	"path"
 	"strings"
 
-	"github.com/halceon/kubelens/backend/internal/config"
+	"github.com/halceonio/kubelens/backend/internal/config"
 )
 
 type SessionBackend string
