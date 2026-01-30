@@ -793,7 +793,13 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       className={`flex flex-col h-full bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-lg dark:shadow-2xl relative transition-colors duration-200 ${isMaximized ? 'col-span-full' : ''}`}
       tabIndex={0}
       onKeyDown={handleKeyDown}
-      onClick={(event) => (event.currentTarget as HTMLDivElement).focus()}
+      onClick={(event) => {
+        const target = event.target as HTMLElement | null;
+        if (target && target.closest('input, textarea, select, button, option, [role="button"]')) {
+          return;
+        }
+        (event.currentTarget as HTMLDivElement).focus();
+      }}
     >
       <div className="bg-white dark:bg-slate-900 px-3 md:px-4 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2 md:gap-3 transition-colors duration-200">
         <div className="flex items-center gap-2 md:gap-3">
