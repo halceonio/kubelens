@@ -599,7 +599,7 @@ const App: React.FC = () => {
                 ? 'grid grid-cols-1 grid-rows-2 auto-rows-fr gap-4'
                 : visibleResources.length === 1
                   ? 'grid grid-cols-1 gap-4'
-                  : 'grid grid-cols-1 xl:grid-cols-2 gap-4'
+                  : 'grid grid-cols-1 xl:grid-cols-2 xl:grid-rows-2 gap-4'
           }`}>
             {configError && (
               <div className="absolute top-16 left-4 right-4 z-10 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-500">
