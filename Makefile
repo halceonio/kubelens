@@ -39,3 +39,6 @@ keycloak-token: ## Fetch a Keycloak access token via password grant (requires en
 
 keycloak-device-token: ## Fetch a Keycloak access token via device authorization flow
 	./scripts/get-keycloak-device-token.sh
+
+keycloak-device-token-py: ## Fetch a Keycloak access token via device flow (python)
+	uv run ./scripts/get_keycloak_device_token.py
