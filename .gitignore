@@ -1,0 +1,51 @@
+
+**__pycache__**
+*.DS_Store
+*.egg-info*
+/frontend/dist
+/frontend/node_modules
+frontend/tsconfig.tsbuildinfo
+
+# Environment files (may contain secrets)
+.env
+.env.local
+*.env
+# But allow example and production templates (no secrets)
+!.env.example
+!.env.production
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+!frontend/src/lib/
+!frontend/src/lib/**
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+backend/.env
+
+refs/exts/*
+/.playwright-mcp
+*.log

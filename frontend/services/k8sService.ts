@@ -1,0 +1,172 @@
+
+import { Pod, LogEntry, LogLevel, Container, AppResource } from '../types';
+import { MOCK_PODS } from '../constants';
+
+const generateMockLog = (podName: string, containerName: string, minutesOffset: number = 0): LogEntry => {
+  const levels: LogLevel[] = ['INFO', 'INFO', 'INFO', 'WARNING', 'ERROR'];
+  const messages = [
+    "Successfully connected to database pool",
+    "Processing incoming request for /api/v1/resource",
+    "Cache miss for key: user_profile_123",
+    "Memory usage approaching 85% threshold",
+    "Unexpected termination of worker thread 4",
+    "Request timeout from external service: inventory-api",
+    "Environment variable 'DEBUG' is set to true",
+    "Validation failed for input: { id: null }",
+    "Heartbeat signal sent to master node",
+    "Buffer overflow detected in stream handler",
+    "New configuration reloaded from ConfigMap",
+  ];
+  
+  const date = new Date();
+  date.setMinutes(date.getMinutes() - minutesOffset);
+
+  return {
+    id: Math.random().toString(36).substr(2, 9),
+    timestamp: date.toISOString(),
+    level: levels[Math.floor(Math.random() * levels.length)],
+    message: messages[Math.floor(Math.random() * messages.length)],
+    podName,
+    containerName
+  };
+};
+
+export const getPods = async (namespace: string): Promise<Pod[]> => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const basePods = (MOCK_PODS[namespace] || []) as any[];
+      const fullPods: Pod[] = basePods.map(p => ({
+        ...p,
+        containers: [
+          { name: 'main-app', image: 'enterprise/app:v1.2.3', ready: true, restartCount: p.restarts },
+          { name: 'istio-proxy', image: 'istio/proxyv2:1.15.0', ready: true, restartCount: 0 },
+        ],
+        volumes: [
+          { name: 'config-vol', mountPath: '/etc/config', readOnly: true },
+          { name: 'data-vol', mountPath: '/var/lib/data', readOnly: false },
+        ],
+        secrets: ['db-credentials', 'api-keys', 'tls-certs'],
+        configMaps: ['app-settings', 'feature-flags', 'nginx-conf'],
+        env: {
+          'DB_HOST': 'psql-cluster-01',
+          'API_KEY': '********',
+          'MAX_RETRIES': '5',
+          'NODE_NAME': 'worker-node-04'
+        },
+        resources: {
+          cpuUsage: (Math.random() * 200).toFixed(0) + 'm',
+          cpuRequest: '100m',
+          cpuLimit: '500m',
+          memUsage: (Math.random() * 512 + 128).toFixed(0) + 'Mi',
+          memRequest: '256Mi',
+          memLimit: '1Gi'
+        }
+      }));
+      resolve(fullPods);
+    }, 500);
+  });
+};
+
+export const getPodByName = async (namespace: string, name: string): Promise<Pod | null> => {
+  const pods = await getPods(namespace);
+  return pods.find(p => p.name === name) || null;
+};
+
+export const getApps = async (namespace: string): Promise<AppResource[]> => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const apps: AppResource[] = [
+        {
+          name: `${namespace}-api`,
+          namespace,
+          type: 'Deployment',
+          replicas: 3,
+          readyReplicas: 3,
+          podNames: [
+            `${namespace}-api-pod-1`, 
+            `${namespace}-api-pod-2`, 
+            `${namespace}-api-pod-3`,
+            `${namespace}-api-old-pod-terminated`
+          ],
+          labels: { 
+            'app': `${namespace}-api`, 
+            'tier': 'frontend',
+            'app.logging.k8s.io/group': namespace.includes('payment') ? 'Core Banking' : 'Support Systems',
+            'app.logging.k8s.io/environment': 'production',
+            'app.logging.k8s.io/version': 'v2.1.0'
+          },
+          annotations: { 'deployment.kubernetes.io/revision': '5' },
+          env: { 'LOG_LEVEL': 'DEBUG', 'NODE_ENV': 'production' },
+          volumes: [{ name: 'api-storage', mountPath: '/data', readOnly: false }],
+          secrets: ['api-key-secret'],
+          configMaps: ['api-config'],
+          resources: {
+            cpuUsage: '450m',
+            cpuRequest: '300m',
+            cpuLimit: '1500m',
+            memUsage: '1.2Gi',
+            memRequest: '768Mi',
+            memLimit: '3Gi'
+          },
+          image: 'v2.1.0'
+        },
+        {
+          name: `${namespace}-db`,
+          namespace,
+          type: 'StatefulSet',
+          replicas: 2,
+          readyReplicas: 1,
+          podNames: [`${namespace}-db-0`, `${namespace}-db-1`],
+          labels: { 
+            'app': `${namespace}-db`, 
+            'tier': 'database',
+            'app.logging.k8s.io/group': namespace.includes('payment') ? 'Core Banking' : 'Database Tier',
+            'app.logging.k8s.io/environment': 'staging'
+          },
+          annotations: { 'statefulset.kubernetes.io/pod-name': `${namespace}-db-0` },
+          env: { 'DB_PASSWORD': '********', 'DB_USER': 'admin' },
+          volumes: [{ name: 'db-data', mountPath: '/var/lib/mysql', readOnly: false }],
+          secrets: ['db-root-password'],
+          configMaps: ['db-tuning-params'],
+          resources: {
+            cpuUsage: '120m',
+            cpuRequest: '500m',
+            cpuLimit: '1000m',
+            memUsage: '2.1Gi',
+            memRequest: '2Gi',
+            memLimit: '4Gi'
+          },
+          image: 'v8.0.31'
+        }
+      ];
+      resolve(apps);
+    }, 400);
+  });
+};
+
+export const getAppByName = async (namespace: string, name: string): Promise<AppResource | null> => {
+  const apps = await getApps(namespace);
+  return apps.find(a => a.name === name) || null;
+};
+
+export const getPodLogs = async (podName: string, count: number = 100, containers: string[] = ['main-app'], multiPodNames?: string[]): Promise<LogEntry[]> => {
+  return new Promise((resolve) => {
+    setTimeout(() => {
+      const logs: LogEntry[] = [];
+      const targets = multiPodNames || [podName];
+      
+      targets.forEach(targetPod => {
+        containers.forEach(container => {
+          const countPerSource = Math.max(1, Math.floor(count / (targets.length * containers.length)));
+          for (let i = 0; i < countPerSource; i++) {
+            // Simulate older logs for "terminated" pods by giving them a larger offset
+            const offset = targetPod.includes('terminated') ? Math.floor(Math.random() * 20) + 10 : Math.floor(Math.random() * 10);
+            logs.push(generateMockLog(targetPod, container, offset));
+          }
+        });
+      });
+      
+      resolve(logs.sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()));
+    }, 300);
+  });
+};

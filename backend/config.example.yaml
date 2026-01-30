@@ -1,0 +1,59 @@
+server:
+  address: ":8080"
+  read_timeout_seconds: 10
+  write_timeout_seconds: 30
+  idle_timeout_seconds: 60
+
+auth:
+  keycloak_url: "https://keycloak.halceon.io"
+  realm: "platforms"
+  client_id: "kubelens"
+  client_secret: "9NIzSlYlsPIMfHCnH82ObwvBeRnKqy7g"
+  allowed_groups:
+    - "k8s-logs-access"
+  allowed_secrets_groups:
+    - "k8s-admin-access"
+
+logs:
+  default_tail_lines: 10000
+  max_tail_lines: 10000
+  max_line_length: 10000
+
+session:
+  max_bytes: 262144
+
+storage:
+  database_url: ""
+
+cache:
+  enabled: true
+  redis_url: ""
+
+kubernetes:
+  cluster_name: "srv-cluster-east"
+  terminated_log_ttl: 3600
+  api:
+    burst: 200
+    qps: 100
+  allowed_namespaces:
+    - "payment-svc"
+    - "inventory-svc"
+    - "auth-svc"
+  app_groups:
+    enabled: true
+    labels:
+      selector: "app.logging.k8s.io/group"
+      name: "app.logging.k8s.io/displayname"
+      environment: "app.logging.k8s.io/environment"
+      version: "app.logging.k8s.io/version"
+  pod_filters:
+    include_regex: ".*"
+    exclude_labels:
+      - "component=istio"
+      - "heritage=Helm"
+  app_filters:
+    include_regex: ".*"
+    exclude_labels:
+      - "component=istio"
+      - "heritage=Helm"
+  label_prefix: "logger.app.k8s.io"

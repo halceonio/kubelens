@@ -1,0 +1,5 @@
+{
+  "name": "KubeLens - Enterprise Log Analyzer",
+  "description": "A slimmed-down Kubernetes IDE for non-infra teams to view, analyze, and debug pod logs and configurations with Keycloak integration and AI-powered log analysis.",
+  "requestFramePermissions": []
+}
