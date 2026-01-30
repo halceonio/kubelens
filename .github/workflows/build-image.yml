@@ -12,6 +12,7 @@ on:
 env:
   HUSKY: 0
   DOCKER_REGISTRY: halceon
+  DOCKER_ALT_REGISTRY: nudevco
   DOCKER_REPO: kubelens
 
 jobs:
@@ -50,5 +51,7 @@ jobs:
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.actions.outputs.semantic_version_tag }}
+            ${{ env.DOCKER_ALT_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
+            ${{ env.DOCKER_ALT_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.actions.outputs.semantic_version_tag }}
           build-args: |
             VITE_USE_MOCKS=false
