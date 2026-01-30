@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import LogView from './components/LogView';
 import PodInspector from './components/PodInspector';
 import AuthGuard from './components/AuthGuard';
-import { Pod, AppResource, ResourceIdentifier, AuthUser, UiConfig, SavedView, ViewFilters, LogLevel, LogViewPreferences } from './types';
+import { Pod, AppResource, ResourceIdentifier, AuthUser, UiConfig, SavedView, ViewFilters, LogLevel } from './types';
 import { getPodByName, getAppByName } from './services/k8sService';
 import { fetchSession, saveSession, clearSession, SessionPayload } from './services/sessionService';
 import { fetchConfig } from './services/configService';
@@ -17,7 +17,6 @@ const STORAGE_KEY_SIDEBAR = 'kubelens_sidebar_open';
 const STORAGE_KEY_SAVED_VIEWS = 'kubelens_saved_views';
 const STORAGE_KEY_VIEW_FILTERS = 'kubelens_view_filters';
 const STORAGE_KEY_ACTIVE_VIEW = 'kubelens_active_view';
-const STORAGE_KEY_LOG_VIEW = 'kubelens_log_view';
 
 const getDefaultTheme = () => {
   const saved = localStorage.getItem(STORAGE_KEY_THEME);
@@ -42,7 +41,6 @@ const App: React.FC = () => {
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [viewFilters, setViewFilters] = useState<ViewFilters>({ logLevel: 'ALL' });
-  const [logViewPrefs, setLogViewPrefs] = useState<LogViewPreferences>({ show_details: true });
 
   // Apply theme to document
   useEffect(() => {
@@ -192,9 +190,8 @@ const App: React.FC = () => {
       localStorage.setItem(STORAGE_KEY_SAVED_VIEWS, JSON.stringify(savedViews));
       localStorage.setItem(STORAGE_KEY_VIEW_FILTERS, JSON.stringify(viewFilters));
       localStorage.setItem(STORAGE_KEY_ACTIVE_VIEW, activeViewId ?? '');
-      localStorage.setItem(STORAGE_KEY_LOG_VIEW, JSON.stringify(logViewPrefs));
     }
-  }, [savedViews, viewFilters, activeViewId, logViewPrefs, sessionToken]);
+  }, [savedViews, viewFilters, activeViewId, sessionToken]);
 
   useEffect(() => {
     if (isRestoring || !sessionToken) return;
@@ -212,14 +209,13 @@ const App: React.FC = () => {
       sidebar_open: isSidebarOpen,
       saved_views: savedViews,
       view_filters: viewFilters,
-      active_view_id: activeViewId,
-      log_view: logViewPrefs
+      active_view_id: activeViewId
     };
 
     saveSession(sessionToken, payload).catch((err) => {
       console.warn('Failed to save session', err);
     });
-  }, [activeResources, pinnedResources, theme, isSidebarOpen, savedViews, viewFilters, activeViewId, logViewPrefs, sessionToken, isRestoring]);
+  }, [activeResources, pinnedResources, theme, isSidebarOpen, savedViews, viewFilters, activeViewId, sessionToken, isRestoring]);
 
   // Restore state once session data is available
   useEffect(() => {
@@ -278,9 +274,6 @@ const App: React.FC = () => {
         if (typeof remoteSession.active_view_id === 'string' || remoteSession.active_view_id === null) {
           setActiveViewId(remoteSession.active_view_id ?? null);
         }
-        if (remoteSession.log_view) {
-          setLogViewPrefs(prev => ({ ...prev, ...remoteSession.log_view }));
-        }
       } else {
         const savedPinned = localStorage.getItem(STORAGE_KEY_PINNED);
         if (savedPinned) {
@@ -309,14 +302,6 @@ const App: React.FC = () => {
         const savedActiveView = localStorage.getItem(STORAGE_KEY_ACTIVE_VIEW);
         if (savedActiveView) {
           setActiveViewId(savedActiveView || null);
-        }
-        const savedLogView = localStorage.getItem(STORAGE_KEY_LOG_VIEW);
-        if (savedLogView) {
-          try {
-            setLogViewPrefs(prev => ({ ...prev, ...(JSON.parse(savedLogView)) }));
-          } catch (e) {
-            console.error("Failed to parse log view prefs", e);
-          }
         }
       }
 
@@ -384,7 +369,6 @@ const App: React.FC = () => {
     localStorage.removeItem(STORAGE_KEY_SAVED_VIEWS);
     localStorage.removeItem(STORAGE_KEY_VIEW_FILTERS);
     localStorage.removeItem(STORAGE_KEY_ACTIVE_VIEW);
-    localStorage.removeItem(STORAGE_KEY_LOG_VIEW);
     window.location.hash = '';
 
     setActiveResources([]);
@@ -396,7 +380,6 @@ const App: React.FC = () => {
     setSavedViews([]);
     setViewFilters({ logLevel: 'ALL' });
     setActiveViewId(null);
-    setLogViewPrefs({ show_details: true });
   }, [sessionToken]);
 
   const handleSaveView = useCallback((name: string) => {
@@ -576,8 +559,6 @@ const App: React.FC = () => {
                     config={uiConfig}
                     initialLogLevel={viewFilters.logLevel}
                     onLogLevelChange={handleLogLevelChange}
-                    initialShowDetails={logViewPrefs.show_details}
-                    onShowDetailsChange={(show) => setLogViewPrefs(prev => ({ ...prev, show_details: show }))}
                   />
                 </div>
               ))

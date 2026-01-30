@@ -1,4 +1,4 @@
-import { ResourceIdentifier, SavedView, ViewFilters, LogViewPreferences } from '../types';
+import { ResourceIdentifier, SavedView, ViewFilters } from '../types';
 
 export type ThemePreference = 'light' | 'dark';
 
@@ -12,7 +12,6 @@ export interface SessionPayload {
   saved_views?: SavedView[];
   view_filters?: ViewFilters;
   active_view_id?: string | null;
-  log_view?: LogViewPreferences;
 }
 
 const SESSION_ENDPOINT = '/api/v1/session';
