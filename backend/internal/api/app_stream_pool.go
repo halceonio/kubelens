@@ -10,7 +10,6 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 const (
@@ -231,21 +230,21 @@ func (s *appStream) reconcilePods(initial bool) error {
 		return errAppNotFound
 	}
 
-	pods, err := s.handler.client.CoreV1().Pods(s.namespace).List(s.ctx, metav1.ListOptions{LabelSelector: selector})
+	pods, err := s.handler.listPodsBySelectorCached(s.ctx, s.namespace, selector)
 	if err != nil {
 		return err
 	}
 
-	names := make([]string, 0, len(pods.Items))
-	for _, pod := range pods.Items {
+	names := make([]string, 0, len(pods))
+	for _, pod := range pods {
 		names = append(names, pod.Name)
 	}
 	newHash := hashStrings(names)
 	changed := newHash != s.lastPodHash
 	s.lastPodHash = newHash
 
-	desired := make(map[string]corev1.Pod, len(pods.Items))
-	for _, pod := range pods.Items {
+	desired := make(map[string]corev1.Pod, len(pods))
+	for _, pod := range pods {
 		desired[pod.Name] = pod
 	}
 

@@ -30,6 +30,7 @@ type KubeHandler struct {
 	podExclude []labelFilter
 	appExclude []labelFilter
 	appStreams *appStreamPool
+	cache      *resourceCache
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandler {
@@ -40,6 +41,7 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandl
 		appInclude: compileRegex(cfg.Kubernetes.AppFilters.IncludeRegex),
 		podExclude: parseLabelFilters(cfg.Kubernetes.PodFilters.ExcludeLabels),
 		appExclude: parseLabelFilters(cfg.Kubernetes.AppFilters.ExcludeLabels),
+		cache:      newResourceCache(),
 	}
 	handler.appStreams = newAppStreamPool(handler)
 	return handler
