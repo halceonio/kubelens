@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/MicahParks/keyfunc/v3"
@@ -40,6 +41,35 @@ type Verifier struct {
 	audience       string
 	allowedGroups  map[string]struct{}
 	allowedSecrets map[string]struct{}
+}
+
+type VerifierProvider interface {
+	AuthenticateRequest(r *http.Request) (*User, error)
+}
+
+type DynamicVerifier struct {
+	mu sync.RWMutex
+	v  *Verifier
+}
+
+func NewDynamicVerifier(v *Verifier) *DynamicVerifier {
+	return &DynamicVerifier{v: v}
+}
+
+func (d *DynamicVerifier) Update(v *Verifier) {
+	d.mu.Lock()
+	d.v = v
+	d.mu.Unlock()
+}
+
+func (d *DynamicVerifier) AuthenticateRequest(r *http.Request) (*User, error) {
+	d.mu.RLock()
+	v := d.v
+	d.mu.RUnlock()
+	if v == nil {
+		return nil, ErrInvalidToken
+	}
+	return v.AuthenticateRequest(r)
 }
 
 type oidcConfig struct {
@@ -170,7 +200,7 @@ func audienceMatches(aud jwt.ClaimStrings, azp string, expected string) bool {
 	return azp == expected
 }
 
-func Middleware(v *Verifier) func(http.Handler) http.Handler {
+func Middleware(v VerifierProvider) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			user, err := v.AuthenticateRequest(r)

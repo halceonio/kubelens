@@ -20,3 +20,7 @@ The frontend loads Keycloak settings at runtime from `GET /api/v1/auth/config`.
 The response is cached locally for a few minutes to reduce repeated calls, and
 the UI only falls back to build-time `VITE_KEYCLOAK_*` overrides if the backend
 endpoint is unavailable.
+
+## Config hot reload
+When the backend is configured via a mounted ConfigMap, it watches the config
+file for changes and reloads the runtime configuration without a restart.

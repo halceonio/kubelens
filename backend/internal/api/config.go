@@ -35,10 +35,16 @@ type LogsResponse struct {
 	MaxLineLength    int `json:"max_line_length"`
 }
 
-func NewConfigHandler(cfg *config.Config) http.HandlerFunc {
+func NewConfigHandler(getConfig func() *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		cfg := getConfig()
+		if cfg == nil {
+			writeError(w, http.StatusServiceUnavailable, "config unavailable")
 			return
 		}
 

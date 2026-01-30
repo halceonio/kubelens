@@ -120,22 +120,31 @@ func Load() (*Config, string, error) {
 		return nil, "", errors.New("config file not found")
 	}
 
-	data, err := os.ReadFile(filepath.Clean(selected))
+	cfg, err := LoadFromPath(selected)
 	if err != nil {
-		return nil, "", fmt.Errorf("read config: %w", err)
-	}
-
-	cfg := &Config{}
-	if err := yaml.Unmarshal(data, cfg); err != nil {
-		return nil, "", fmt.Errorf("parse config: %w", err)
-	}
-
-	applyDefaults(cfg)
-	if err := validate(cfg); err != nil {
 		return nil, "", err
 	}
 
 	return cfg, selected, nil
+}
+
+func LoadFromPath(path string) (*Config, error) {
+	data, err := os.ReadFile(filepath.Clean(path))
+	if err != nil {
+		return nil, fmt.Errorf("read config: %w", err)
+	}
+
+	cfg := &Config{}
+	if err := yaml.Unmarshal(data, cfg); err != nil {
+		return nil, fmt.Errorf("parse config: %w", err)
+	}
+
+	applyDefaults(cfg)
+	if err := validate(cfg); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
 }
 
 func applyDefaults(cfg *Config) {

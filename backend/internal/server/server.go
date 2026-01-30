@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"sync/atomic"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -15,14 +16,23 @@ import (
 )
 
 type Server struct {
-	cfg          *config.Config
-	auth         *auth.Verifier
+	cfg          atomic.Value
+	auth         auth.VerifierProvider
 	k8sClient    *kubernetes.Clientset
 	sessionStore storage.SessionStore
+	kubeHandler  *dynamicHandler
 	httpServer   *http.Server
 }
 
-func New(cfg *config.Config, verifier *auth.Verifier, client *kubernetes.Clientset, sessions storage.SessionStore) *Server {
+func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.Clientset, sessions storage.SessionStore) *Server {
+	s := &Server{
+		auth:         verifier,
+		k8sClient:    client,
+		sessionStore: sessions,
+	}
+	s.cfg.Store(cfg)
+	configProvider := func() *config.Config { return s.cfg.Load().(*config.Config) }
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", api.HealthHandler)
 	mux.Handle("/readyz", api.ReadyHandler(func(r *http.Request) error {
@@ -33,16 +43,17 @@ func New(cfg *config.Config, verifier *auth.Verifier, client *kubernetes.Clients
 	}))
 
 	sessionHandler := api.NewSessionHandler(sessions, cfg.Session.MaxBytes)
-	authHandler := api.NewAuthHandler(cfg)
-	authConfigHandler := api.NewAuthConfigHandler(cfg)
-	configHandler := api.NewConfigHandler(cfg)
+	authHandler := api.NewAuthHandler(configProvider)
+	authConfigHandler := api.NewAuthConfigHandler(configProvider)
+	configHandler := api.NewConfigHandler(configProvider)
 	mux.Handle("/api/v1/session", auth.Middleware(verifier)(sessionHandler))
 	mux.Handle("/api/v1/auth/token", authHandler)
 	mux.Handle("/api/v1/auth/config", authConfigHandler)
 	mux.Handle("/api/v1/config", auth.Middleware(verifier)(configHandler))
-	kubeHandler := auth.Middleware(verifier)(api.NewKubeHandler(cfg, client))
-	mux.Handle("/api/v1/namespaces", kubeHandler)
-	mux.Handle("/api/v1/namespaces/", kubeHandler)
+
+	kubeDynamic := newDynamicHandler(auth.Middleware(verifier)(api.NewKubeHandler(cfg, client)))
+	mux.Handle("/api/v1/namespaces", kubeDynamic)
+	mux.Handle("/api/v1/namespaces/", kubeDynamic)
 
 	server := &http.Server{
 		Addr:         cfg.Server.Address,
@@ -52,13 +63,9 @@ func New(cfg *config.Config, verifier *auth.Verifier, client *kubernetes.Clients
 		IdleTimeout:  time.Duration(cfg.Server.IdleTimeoutSeconds) * time.Second,
 	}
 
-	return &Server{
-		cfg:          cfg,
-		auth:         verifier,
-		k8sClient:    client,
-		sessionStore: sessions,
-		httpServer:   server,
-	}
+	s.kubeHandler = kubeDynamic
+	s.httpServer = server
+	return s
 }
 
 func (s *Server) Start() error {
@@ -67,4 +74,14 @@ func (s *Server) Start() error {
 
 func (s *Server) Shutdown(ctx context.Context) error {
 	return s.httpServer.Shutdown(ctx)
+}
+
+func (s *Server) UpdateConfig(cfg *config.Config) {
+	if cfg == nil {
+		return
+	}
+	s.cfg.Store(cfg)
+	if s.k8sClient != nil && s.kubeHandler != nil {
+		s.kubeHandler.Update(auth.Middleware(s.auth)(api.NewKubeHandler(cfg, s.k8sClient)))
+	}
 }

@@ -4,6 +4,7 @@ go 1.25.4
 
 require (
 	github.com/MicahParks/keyfunc/v3 v3.7.0
+	github.com/fsnotify/fsnotify v1.7.0
 	github.com/golang-jwt/jwt/v5 v5.2.2
 	github.com/jackc/pgx/v5 v5.8.0
 	github.com/redis/go-redis/v9 v9.17.3

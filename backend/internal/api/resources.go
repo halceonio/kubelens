@@ -76,6 +76,7 @@ type appResponse struct {
 	Volumes       []volumeMountResponse `json:"volumes"`
 	Secrets       []string              `json:"secrets"`
 	ConfigMaps    []string              `json:"configMaps"`
+	Containers    []containerResponse   `json:"containers,omitempty"`
 	Image         string                `json:"image,omitempty"`
 }
 
@@ -469,6 +470,7 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment)
 	requests, limits := sumResourceRequests(dep.Spec.Template.Spec.Containers)
 	volumes := extractVolumeMounts(dep.Spec.Template.Spec.Containers)
 	secrets, configMaps := extractSecretsConfigMaps(dep.Spec.Template.Spec.Containers, dep.Spec.Template.Spec.Volumes)
+	containers := mapTemplateContainers(dep.Spec.Template.Spec.Containers)
 	image := ""
 	if len(dep.Spec.Template.Spec.Containers) > 0 {
 		image = dep.Spec.Template.Spec.Containers[0].Image
@@ -495,6 +497,7 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment)
 		Volumes:    volumes,
 		Secrets:    secrets,
 		ConfigMaps: configMaps,
+		Containers: containers,
 		Image:      image,
 	}
 }
@@ -504,6 +507,7 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 	requests, limits := sumResourceRequests(sts.Spec.Template.Spec.Containers)
 	volumes := extractVolumeMounts(sts.Spec.Template.Spec.Containers)
 	secrets, configMaps := extractSecretsConfigMaps(sts.Spec.Template.Spec.Containers, sts.Spec.Template.Spec.Volumes)
+	containers := mapTemplateContainers(sts.Spec.Template.Spec.Containers)
 	image := ""
 	if len(sts.Spec.Template.Spec.Containers) > 0 {
 		image = sts.Spec.Template.Spec.Containers[0].Image
@@ -530,6 +534,7 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 		Volumes:    volumes,
 		Secrets:    secrets,
 		ConfigMaps: configMaps,
+		Containers: containers,
 		Image:      image,
 	}
 }
@@ -705,6 +710,19 @@ func extractVolumeMounts(containers []corev1.Container) []volumeMountResponse {
 		volumes = append(volumes, mount)
 	}
 	return volumes
+}
+
+func mapTemplateContainers(containers []corev1.Container) []containerResponse {
+	resp := make([]containerResponse, 0, len(containers))
+	for _, container := range containers {
+		resp = append(resp, containerResponse{
+			Name:         container.Name,
+			Image:        container.Image,
+			Ready:        true,
+			RestartCount: 0,
+		})
+	}
+	return resp
 }
 
 func extractSecretsConfigMaps(containers []corev1.Container, volumes []corev1.Volume) ([]string, []string) {

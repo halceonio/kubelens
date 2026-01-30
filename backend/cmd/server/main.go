@@ -6,8 +6,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
+	"sync"
 	"syscall"
 	"time"
+
+	"github.com/fsnotify/fsnotify"
 
 	"github.com/halceonio/kubelens/backend/internal/auth"
 	"github.com/halceonio/kubelens/backend/internal/config"
@@ -32,6 +36,7 @@ func main() {
 	if err != nil {
 		logger.Fatalf("auth setup error: %v", err)
 	}
+	dynamicVerifier := auth.NewDynamicVerifier(verifier)
 
 	k8sClient, err := k8s.NewClient(cfg.Kubernetes)
 	if err != nil {
@@ -44,7 +49,17 @@ func main() {
 	}
 	logger.Printf("session store: %s", backend)
 
-	srv := server.New(cfg, verifier, k8sClient, sessionStore)
+	srv := server.New(cfg, dynamicVerifier, k8sClient, sessionStore)
+
+	go watchConfig(ctx, logger, path, func(updated *config.Config) {
+		newVerifier, err := auth.NewVerifier(ctx, updated.Auth)
+		if err != nil {
+			logger.Printf("config reload: auth verifier update failed: %v", err)
+		} else {
+			dynamicVerifier.Update(newVerifier)
+		}
+		srv.UpdateConfig(updated)
+	})
 
 	go func() {
 		logger.Printf("server listening on %s", cfg.Server.Address)
@@ -62,5 +77,65 @@ func main() {
 	defer shutdownCancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		logger.Printf("shutdown error: %v", err)
+	}
+}
+
+func watchConfig(ctx context.Context, logger *log.Logger, path string, onReload func(cfg *config.Config)) {
+	if path == "" {
+		return
+	}
+
+	watcher, err := fsnotify.NewWatcher()
+	if err != nil {
+		logger.Printf("config watcher error: %v", err)
+		return
+	}
+	defer watcher.Close()
+
+	dir := filepath.Dir(path)
+	if err := watcher.Add(dir); err != nil {
+		logger.Printf("config watcher error: %v", err)
+		return
+	}
+	if err := watcher.Add(path); err != nil {
+		logger.Printf("config watcher error: %v", err)
+	}
+
+	var mu sync.Mutex
+	var timer *time.Timer
+
+	scheduleReload := func() {
+		mu.Lock()
+		defer mu.Unlock()
+		if timer != nil {
+			timer.Stop()
+		}
+		timer = time.AfterFunc(500*time.Millisecond, func() {
+			updated, err := config.LoadFromPath(path)
+			if err != nil {
+				logger.Printf("config reload error: %v", err)
+				return
+			}
+			logger.Printf("config reloaded from %s", path)
+			onReload(updated)
+		})
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case event, ok := <-watcher.Events:
+			if !ok {
+				return
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Rename|fsnotify.Remove) != 0 {
+				scheduleReload()
+			}
+		case err := <-watcher.Errors:
+			if err != nil {
+				logger.Printf("config watcher error: %v", err)
+			}
+		}
 	}
 }

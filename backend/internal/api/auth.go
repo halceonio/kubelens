@@ -13,7 +13,7 @@ import (
 )
 
 type AuthHandler struct {
-	cfg        *config.Config
+	getConfig  func() *config.Config
 	httpClient *http.Client
 }
 
@@ -22,9 +22,9 @@ type tokenRequest struct {
 	RedirectURI string `json:"redirect_uri"`
 }
 
-func NewAuthHandler(cfg *config.Config) *AuthHandler {
+func NewAuthHandler(getConfig func() *config.Config) *AuthHandler {
 	return &AuthHandler{
-		cfg: cfg,
+		getConfig: getConfig,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
@@ -37,7 +37,12 @@ func (h *AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if h.cfg.Auth.ClientSecret == "" {
+	cfg := h.getConfig()
+	if cfg == nil {
+		writeError(w, http.StatusBadRequest, "missing auth config")
+		return
+	}
+	if cfg.Auth.ClientSecret == "" {
 		writeError(w, http.StatusBadRequest, "auth.client_secret is required for code exchange")
 		return
 	}
@@ -56,11 +61,11 @@ func (h *AuthHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", h.cfg.Auth.KeycloakURL, h.cfg.Auth.Realm)
+	tokenURL := fmt.Sprintf("%s/realms/%s/protocol/openid-connect/token", cfg.Auth.KeycloakURL, cfg.Auth.Realm)
 	form := url.Values{}
 	form.Set("grant_type", "authorization_code")
-	form.Set("client_id", h.cfg.Auth.ClientID)
-	form.Set("client_secret", h.cfg.Auth.ClientSecret)
+	form.Set("client_id", cfg.Auth.ClientID)
+	form.Set("client_secret", cfg.Auth.ClientSecret)
 	form.Set("code", req.Code)
 	form.Set("redirect_uri", req.RedirectURI)
 

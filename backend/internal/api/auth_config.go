@@ -14,10 +14,16 @@ type AuthConfigResponse struct {
 	AllowedSecretsGroups []string `json:"allowed_secrets_groups,omitempty"`
 }
 
-func NewAuthConfigHandler(cfg *config.Config) http.HandlerFunc {
+func NewAuthConfigHandler(getConfig func() *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		cfg := getConfig()
+		if cfg == nil {
+			writeError(w, http.StatusServiceUnavailable, "config unavailable")
 			return
 		}
 

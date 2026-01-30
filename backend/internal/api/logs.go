@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
@@ -30,10 +29,11 @@ type KubeHandler struct {
 	appInclude *regexp.Regexp
 	podExclude []labelFilter
 	appExclude []labelFilter
+	appStreams *appStreamPool
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandler {
-	return &KubeHandler{
+	handler := &KubeHandler{
 		cfg:        cfg,
 		client:     client,
 		podInclude: compileRegex(cfg.Kubernetes.PodFilters.IncludeRegex),
@@ -41,6 +41,8 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandl
 		podExclude: parseLabelFilters(cfg.Kubernetes.PodFilters.ExcludeLabels),
 		appExclude: parseLabelFilters(cfg.Kubernetes.AppFilters.ExcludeLabels),
 	}
+	handler.appStreams = newAppStreamPool(handler)
+	return handler
 }
 
 func (h *KubeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +94,80 @@ func (h *KubeHandler) streamPodLogs(w http.ResponseWriter, r *http.Request, name
 	setSSEHeaders(w)
 	flusher.Flush()
 
-	h.consumeLogStream(r.Context(), w, flusher, stream, name, opts.Container)
+	logCh := make(chan logEntry, appStreamLogBuffer)
+	go h.consumeLogStreamToChannel(r.Context(), stream, name, opts.Container, logCh)
+
+	heartbeat := time.NewTicker(appStreamHeartbeatPeriod)
+	defer heartbeat.Stop()
+	statusPeriod := time.Duration(h.cfg.Logs.AppStreamResync) * time.Second
+	if statusPeriod <= 0 {
+		statusPeriod = 10 * time.Second
+	}
+	statusTicker := time.NewTicker(statusPeriod)
+	defer statusTicker.Stop()
+
+	var prevRestarts int32
+	var prevReady bool
+	if pod, err := h.client.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{}); err == nil {
+		prevRestarts, prevReady = summarizePodStatus(*pod)
+	}
+
+	sendMarker := func(kind, message string) error {
+		event := newJSONEvent("marker", streamMarker{
+			Timestamp: time.Now().UTC().Format(time.RFC3339Nano),
+			PodName:   name,
+			Kind:      kind,
+			Message:   message,
+		})
+		return writeSSEEvent(w, event)
+	}
+
+	for {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-heartbeat.C:
+			event := newJSONEvent("heartbeat", streamHeartbeat{Timestamp: time.Now().UTC().Format(time.RFC3339Nano)})
+			if err := writeSSEEvent(w, event); err != nil {
+				return
+			}
+			flusher.Flush()
+		case <-statusTicker.C:
+			pod, err := h.client.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
+			if err != nil {
+				continue
+			}
+			restarts, ready := summarizePodStatus(*pod)
+			if restarts > prevRestarts {
+				msg := fmt.Sprintf("pod restart count increased: %d → %d", prevRestarts, restarts)
+				if err := sendMarker("pod-restart", msg); err != nil {
+					return
+				}
+				prevRestarts = restarts
+			}
+			if ready != prevReady {
+				if ready {
+					if err := sendMarker("pod-ready", "pod became ready"); err != nil {
+						return
+					}
+				} else {
+					if err := sendMarker("pod-not-ready", "pod became not ready"); err != nil {
+						return
+					}
+				}
+				prevReady = ready
+			}
+			flusher.Flush()
+		case entry, ok := <-logCh:
+			if !ok {
+				return
+			}
+			if err := writeSSEEvent(w, newLogEvent(entry)); err != nil {
+				return
+			}
+			flusher.Flush()
+		}
+	}
 }
 
 func (h *KubeHandler) streamAppLogs(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -102,149 +177,34 @@ func (h *KubeHandler) streamAppLogs(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	setSSEHeaders(w)
-	flusher.Flush()
-
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	logCh := make(chan logEntry, 256)
-	doneCh := make(chan string, 128)
-	baseOpts := h.buildLogOptions(r)
-
-	var mu sync.Mutex
-	active := make(map[string]context.CancelFunc)
-
-	startStream := func(podName string) {
-		mu.Lock()
-		if _, exists := active[podName]; exists {
-			mu.Unlock()
-			return
-		}
-		streamCtx, streamCancel := context.WithCancel(ctx)
-		active[podName] = streamCancel
-		mu.Unlock()
-
-		go func() {
-			optsCopy := *baseOpts
-			stream, err := h.client.CoreV1().Pods(namespace).GetLogs(podName, &optsCopy).Stream(streamCtx)
-			if err != nil {
-				doneCh <- podName
-				return
-			}
-			defer stream.Close()
-			h.consumeLogStreamToChannel(streamCtx, stream, podName, optsCopy.Container, logCh)
-			doneCh <- podName
-		}()
-	}
-
-	stopStream := func(podName string) {
-		mu.Lock()
-		cancelFn, exists := active[podName]
-		if exists {
-			delete(active, podName)
-		}
-		mu.Unlock()
-		if exists {
-			cancelFn()
-		}
-	}
-
-	reconcilePods := func(currentHash string) (string, error) {
-		pods, err := h.listPodsForApp(ctx, namespace, name)
-		if err != nil {
-			return currentHash, err
-		}
-		nextHash := hashStrings(pods)
-		if nextHash == currentHash {
-			return currentHash, nil
-		}
-
-		desired := make(map[string]struct{}, len(pods))
-		for _, pod := range pods {
-			desired[pod] = struct{}{}
-		}
-
-		mu.Lock()
-		for pod := range active {
-			if _, ok := desired[pod]; !ok {
-				mu.Unlock()
-				stopStream(pod)
-				mu.Lock()
-			}
-		}
-		for pod := range desired {
-			if _, ok := active[pod]; !ok {
-				mu.Unlock()
-				startStream(pod)
-				mu.Lock()
-			}
-		}
-		mu.Unlock()
-		return nextHash, nil
-	}
-
-	var lastHash string
-	if hash, err := reconcilePods(""); err != nil {
+	opts := h.buildLogOptions(r)
+	sub, unsubscribe, err := h.appStreams.subscribe(r.Context(), namespace, name, opts)
+	if err != nil {
 		status := http.StatusNotFound
 		if !errors.Is(err, errAppNotFound) {
 			status = http.StatusBadGateway
 		}
 		writeError(w, status, err.Error())
 		return
-	} else {
-		lastHash = hash
 	}
+	defer unsubscribe()
 
-	interval := time.Duration(h.cfg.Logs.AppStreamResync) * time.Second
-	if interval <= 0 {
-		interval = 10 * time.Second
-	}
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
+	setSSEHeaders(w)
+	flusher.Flush()
 
 	for {
 		select {
-		case <-ticker.C:
-			if hash, err := reconcilePods(lastHash); err == nil {
-				lastHash = hash
-			}
-		case podName := <-doneCh:
-			mu.Lock()
-			delete(active, podName)
-			mu.Unlock()
-		case <-ctx.Done():
+		case <-r.Context().Done():
 			return
-		case entry, ok := <-logCh:
+		case event, ok := <-sub.ch:
 			if !ok {
 				return
 			}
-			if err := writeSSE(w, entry); err != nil {
+			if err := writeSSEEvent(w, event); err != nil {
 				return
 			}
 			flusher.Flush()
 		}
-	}
-}
-
-func (h *KubeHandler) consumeLogStream(ctx context.Context, w http.ResponseWriter, flusher http.Flusher, stream ioReadCloser, podName, containerName string) {
-	reader := bufio.NewReader(stream)
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			return
-		}
-		entry := h.parseLogLine(strings.TrimRight(line, "\n"), podName, containerName)
-		if err := writeSSE(w, entry); err != nil {
-			return
-		}
-		flusher.Flush()
 	}
 }
 
@@ -384,13 +344,36 @@ func setSSEHeaders(w http.ResponseWriter) {
 	w.Header().Set("X-Accel-Buffering", "no")
 }
 
+type sseEvent struct {
+	Event string
+	ID    string
+	Data  []byte
+}
+
 func writeSSE(w http.ResponseWriter, entry logEntry) error {
 	payload, err := json.Marshal(entry)
 	if err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(w, "id: %s\nevent: log\ndata: %s\n\n", entry.Timestamp, payload)
-	return err
+	return writeSSEEvent(w, sseEvent{Event: "log", ID: entry.Timestamp, Data: payload})
+}
+
+func writeSSEEvent(w http.ResponseWriter, event sseEvent) error {
+	if event.Event == "" {
+		event.Event = "message"
+	}
+	if event.ID != "" {
+		if _, err := fmt.Fprintf(w, "id: %s\n", event.ID); err != nil {
+			return err
+		}
+	}
+	if _, err := fmt.Fprintf(w, "event: %s\n", event.Event); err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(w, "data: %s\n\n", event.Data); err != nil {
+		return err
+	}
+	return nil
 }
 
 type ioReadCloser interface {
