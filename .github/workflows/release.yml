@@ -87,6 +87,8 @@ jobs:
           file: docker/Dockerfile
           push: true
           platforms: linux/amd64,linux/arm64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.version.outputs.value }}

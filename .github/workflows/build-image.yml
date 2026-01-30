@@ -48,10 +48,11 @@ jobs:
           file: docker/Dockerfile
           push: true
           platforms: linux/amd64
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
           tags: |
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.actions.outputs.semantic_version_tag }}
             ${{ env.DOCKER_ALT_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
             ${{ env.DOCKER_ALT_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.actions.outputs.semantic_version_tag }}
-          build-args: |
-            VITE_USE_MOCKS=false
+          
