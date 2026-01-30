@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py docs-preview docs-build
+.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py docs-preview docs-build release-tag
 
 DEV_CONFIG ?= backend/config.test.yaml
 DEV_KUBECONFIG ?= refs/kubelens-test.kubeconfig
@@ -67,6 +67,14 @@ keycloak-device-token: ## Fetch a Keycloak access token via device authorization
 
 keycloak-device-token-py: ## Fetch a Keycloak access token via device flow (python)
 	uv run ./scripts/get_keycloak_device_token.py
+
+release-tag: ## Create and push a git tag (VERSION required, e.g. v0.0.1)
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make release-tag VERSION=v0.0.1"; \
+		exit 1; \
+	fi
+	git tag -a "$(VERSION)" -m "Release $(VERSION)"
+	git push origin "$(VERSION)"
 
 
 .PHONY: docker-build
