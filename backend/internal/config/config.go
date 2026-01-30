@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"gopkg.in/yaml.v3"
@@ -140,6 +141,7 @@ func LoadFromPath(path string) (*Config, error) {
 	}
 
 	applyDefaults(cfg)
+	applyEnvOverrides(cfg)
 	if err := validate(cfg); err != nil {
 		return nil, err
 	}
@@ -182,6 +184,32 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Kubernetes.TerminatedLogTTL == 0 {
 		cfg.Kubernetes.TerminatedLogTTL = int((time.Minute * 60).Seconds())
+	}
+}
+
+func applyEnvOverrides(cfg *Config) {
+	if cfg == nil {
+		return
+	}
+	if val := strings.TrimSpace(os.Getenv("KUBELENS_CACHE_REDIS_URL")); val != "" {
+		cfg.Cache.RedisURL = val
+		cfg.Cache.Enabled = true
+	}
+	if val := strings.TrimSpace(os.Getenv("KUBELENS_CACHE_ENABLED")); val != "" {
+		if enabled, ok := parseEnvBool(val); ok {
+			cfg.Cache.Enabled = enabled
+		}
+	}
+}
+
+func parseEnvBool(val string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(val)) {
+	case "1", "true", "yes", "y", "on":
+		return true, true
+	case "0", "false", "no", "n", "off":
+		return false, true
+	default:
+		return false, false
 	}
 }
 

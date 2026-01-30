@@ -14,6 +14,8 @@ When running the all-in-one container, you can start a local Valkey (Redis-compa
 - `START_LOCAL_VALKEY` or `START_LOCAL_REDIS`: set to `true`, `1`, or `yes` to enable.
 - `LOCAL_VALKEY_DATA_DIR` or `LOCAL_REDIS_DATA_DIR`: data directory for Valkey (default `/data/cache`).
 - `LOCAL_VALKEY_MAXMEMORY` or `LOCAL_REDIS_MAXMEMORY`: optional max memory setting (e.g. `512mb` or bytes).
+- `KUBELENS_CACHE_ENABLED`: optional override for cache.enabled (set automatically when local Valkey starts).
+- `KUBELENS_CACHE_REDIS_URL`: optional override for cache.redis_url (set automatically when local Valkey starts).
 
 If a local cache is enabled, the entrypoint forces:
 ```yaml

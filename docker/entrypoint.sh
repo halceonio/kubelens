@@ -17,16 +17,6 @@ RUNTIME_CONFIG="${KUBELENS_RUNTIME_CONFIG:-/var/lib/kubelens/config.runtime.yaml
 SUPERVISOR_DIR="/etc/supervisord.d"
 VALKEY_RUNTIME_CONFIG="/var/lib/kubelens/valkey.conf"
 
-ensure_writable_config() {
-  if [ -f "$CONFIG_PATH" ] && [ ! -w "$CONFIG_PATH" ]; then
-    mkdir -p "$(dirname "$RUNTIME_CONFIG")"
-    cp "$CONFIG_PATH" "$RUNTIME_CONFIG"
-    CONFIG_PATH="$RUNTIME_CONFIG"
-    export KUBELENS_CONFIG="$CONFIG_PATH"
-    log "using runtime config at $CONFIG_PATH"
-  fi
-}
-
 extract_database_url() {
   if [ ! -f "$CONFIG_PATH" ]; then
     return
@@ -115,15 +105,8 @@ maybe_enable_local_cache() {
     fi
   fi
 
-  ensure_writable_config
-  if [ -f "$CONFIG_PATH" ]; then
-    cat >> "$CONFIG_PATH" <<EOF
-
-cache:
-  enabled: true
-  redis_url: "redis://localhost:6379/0"
-EOF
-  fi
+  export KUBELENS_CACHE_ENABLED=true
+  export KUBELENS_CACHE_REDIS_URL="redis://localhost:6379/0"
 
   mkdir -p "$SUPERVISOR_DIR"
   cat > "$SUPERVISOR_DIR/valkey.conf" <<EOF
