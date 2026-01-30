@@ -127,6 +127,7 @@ kubernetes:
 - `docs/runtime-env.md` backend runtime environment variables
 - `docs/deploy.md` deployment guide
 - `docs/github-pages.md` publishing instructions
+- Preview docs locally: `make docs-preview`
 
 ## License
 Internal use only.

@@ -52,3 +52,6 @@ refs/kubelens-test.kubeconfig
 /backend/server
 /.playwright-mcp
 *.log
+site/
+docs/_site/
+docs/.jekyll-cache/

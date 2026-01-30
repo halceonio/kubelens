@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py docs-preview
+.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py docs-preview docs-build
 
 DEV_CONFIG ?= backend/config.test.yaml
 DEV_KUBECONFIG ?= refs/kubelens-test.kubeconfig
@@ -34,8 +34,11 @@ frontend-build: ## Build frontend
 frontend-preview: ## Preview frontend build
 	cd frontend && npm run preview
 
-docs-preview: ## Preview docs locally (requires jekyll)
-	cd docs && JEKYLL_ENV=development jekyll serve --livereload --host 0.0.0.0 --port 4000
+docs-preview: ## Preview docs locally (requires uv + mkdocs)
+	uv run mkdocs serve --dev-addr 0.0.0.0:4000
+
+docs-build: ## Build docs site
+	uv run mkdocs build
 
 dev: ## Run backend + frontend together (Ctrl+C to stop)
 	@bash -c 'set -e; trap "kill 0" EXIT; mkdir -p backend/data; \

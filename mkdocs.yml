@@ -1,0 +1,35 @@
+site_name: KubeLens
+site_description: "Enterprise Kubernetes log explorer"
+repo_name: halceon/kubelens
+
+# Docs live in ./docs
+# Build output defaults to ./site
+
+docs_dir: docs
+
+nav:
+  - Overview: index.md
+  - Quickstart: quickstart.md
+  - Configuration: configuration.md
+  - Runtime Env: runtime-env.md
+  - Architecture: architecture.md
+  - Deploy: deploy.md
+  - Screenshots: screenshots.md
+  - GitHub Pages: github-pages.md
+
+theme:
+  name: material
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - attr_list
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.details
+  - pymdownx.tabbed
+  - toc:
+      permalink: true
