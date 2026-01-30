@@ -8,6 +8,13 @@ KubeLens uses a YAML config file for backend behavior. See `backend/config.examp
 - **Session storage**: Redis, sqlite, or postgres.
 - **Kubernetes**: Namespace allowlist, app grouping labels, include/exclude filters.
 
+## Frontend auth config
+The frontend reads Keycloak settings at runtime from:
+```
+GET /api/v1/auth/config
+```
+This endpoint returns the Keycloak URL, realm, client ID, and allowed groups from the backend config. It does **not** return secrets. The UI caches this response locally for a few minutes and will only fall back to build-time `VITE_KEYCLOAK_*` overrides if the endpoint is unavailable.
+
 ## Example
 ```yaml
 auth:
@@ -40,4 +47,3 @@ kubernetes:
       environment: "app.enterprise.com/env"
       version: "app.enterprise.com/version"
 ```
-

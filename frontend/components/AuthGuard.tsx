@@ -23,6 +23,37 @@ type AuthConfig = {
 };
 
 const DEFAULT_ALLOWED_GROUPS = ['k8s-logs-access'];
+const AUTH_CONFIG_STORAGE_KEY = 'kubelens_auth_config';
+const AUTH_CONFIG_TTL_MS = 5 * 60 * 1000;
+
+type StoredAuthConfig = AuthConfig & { savedAt: number };
+
+const loadCachedAuthConfig = (): AuthConfig | null => {
+  try {
+    const raw = localStorage.getItem(AUTH_CONFIG_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as StoredAuthConfig;
+    if (!parsed?.keycloakUrl || !parsed?.realm || !parsed?.clientId) return null;
+    if (!parsed.savedAt || Date.now() - parsed.savedAt > AUTH_CONFIG_TTL_MS) return null;
+    return {
+      keycloakUrl: parsed.keycloakUrl,
+      realm: parsed.realm,
+      clientId: parsed.clientId,
+      allowedGroups: parsed.allowedGroups?.length ? parsed.allowedGroups : DEFAULT_ALLOWED_GROUPS
+    };
+  } catch {
+    return null;
+  }
+};
+
+const saveCachedAuthConfig = (cfg: AuthConfig) => {
+  try {
+    const payload: StoredAuthConfig = { ...cfg, savedAt: Date.now() };
+    localStorage.setItem(AUTH_CONFIG_STORAGE_KEY, JSON.stringify(payload));
+  } catch {
+    // best-effort cache only
+  }
+};
 
 const parseJwtClaims = (token: string): JwtClaims | null => {
   try {
@@ -102,16 +133,23 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
               const allowedGroups = Array.isArray(data?.allowed_groups)
                 ? data.allowed_groups.filter((group: string) => typeof group === 'string' && group.length > 0)
                 : [];
-              return {
+              const config: AuthConfig = {
                 keycloakUrl,
                 realm,
                 clientId,
                 allowedGroups: allowedGroups.length ? allowedGroups : DEFAULT_ALLOWED_GROUPS
               };
+              saveCachedAuthConfig(config);
+              return config;
             }
           }
         } catch (err) {
           console.warn('Failed to load auth config', err);
+        }
+
+        const cached = loadCachedAuthConfig();
+        if (cached) {
+          return cached;
         }
 
         if (envKeycloakUrl && envRealm && envClientId) {

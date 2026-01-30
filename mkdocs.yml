@@ -1,6 +1,7 @@
 site_name: KubeLens
 site_description: "Enterprise Kubernetes log explorer"
-repo_name: halceon/kubelens
+repo_name: halceonio/kubelens
+repo_url: https://github.com/halceonio/kubelens
 
 # Docs live in ./docs
 # Build output defaults to ./site
