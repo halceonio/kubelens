@@ -1,10 +1,13 @@
 SHELL := /bin/bash
 
-.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py
+.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py
 
 DEV_CONFIG ?= backend/config.test.yaml
-DEV_KUBECONFIG ?= refs/halceon.yaml
+DEV_KUBECONFIG ?= refs/kubelens-test.kubeconfig
 DEV_FRONTEND_PORT ?= 3000
+ROOT_DIR := $(abspath $(dir $(lastword $(MAKEFILE_LIST))))
+DEV_CONFIG_ABS := $(abspath $(DEV_CONFIG))
+DEV_KUBECONFIG_ABS := $(abspath $(DEV_KUBECONFIG))
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "%-22s %s\n", $$1, $$2}'
@@ -14,7 +17,7 @@ backend-build: ## Build backend server binary
 
 backend-run: ## Run backend with test config
 	mkdir -p backend/data
-	KUBELENS_CONFIG=backend/config.test.yaml go run ./backend/cmd/server
+	cd backend && KUBELENS_CONFIG="$(DEV_CONFIG_ABS)" KUBECONFIG="$(DEV_KUBECONFIG_ABS)" go run ./cmd/server
 
 backend-tidy: ## Tidy backend Go modules
 	cd backend && go mod tidy
@@ -33,8 +36,12 @@ frontend-preview: ## Preview frontend build
 
 dev: ## Run backend + frontend together (Ctrl+C to stop)
 	@bash -c 'set -e; trap "kill 0" EXIT; mkdir -p backend/data; \
-	KUBELENS_CONFIG="$(DEV_CONFIG)" KUBECONFIG="$(DEV_KUBECONFIG)" go run ./backend/cmd/server & \
+	cd backend && KUBELENS_CONFIG="$(DEV_CONFIG_ABS)" KUBECONFIG="$(DEV_KUBECONFIG_ABS)" go run ./cmd/server & \
 	cd frontend && npm run dev -- --host 0.0.0.0 --port $(DEV_FRONTEND_PORT) & wait'
+
+kill-dev: ## Kill all dev processes
+	@killport $(DEV_FRONTEND_PORT) || true
+	@killport 8080 || true
 
 kube-sa: ## Provision service account and export kubeconfig (NS and SA required)
 	@if [ -z "$(NS)" ] || [ -z "$(SA)" ]; then \
