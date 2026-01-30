@@ -8,7 +8,7 @@ export KUBELENS_CONFIG=backend/config.yaml
 export KUBECONFIG=~/.kube/config
 ```
 
-2) Configure the frontend:
+2) (Optional) Configure the frontend for mocks or a dev token:
 ```bash
 cp frontend/.env.example frontend/.env
 ```
@@ -34,4 +34,3 @@ Open:
 ```
 http://localhost:8080
 ```
-

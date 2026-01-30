@@ -15,6 +15,15 @@ type JwtClaims = {
   groups?: string[];
 };
 
+type AuthConfig = {
+  keycloakUrl: string;
+  realm: string;
+  clientId: string;
+  allowedGroups: string[];
+};
+
+const DEFAULT_ALLOWED_GROUPS = ['k8s-logs-access'];
+
 const parseJwtClaims = (token: string): JwtClaims | null => {
   try {
     const parts = token.split('.');
@@ -33,16 +42,12 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
 
-  const keycloakUrl = (import.meta as any).env?.VITE_KEYCLOAK_URL || MOCK_CONFIG.keycloakUrl;
-  const realm = (import.meta as any).env?.VITE_KEYCLOAK_REALM || MOCK_CONFIG.realm;
-  const clientId = (import.meta as any).env?.VITE_KEYCLOAK_CLIENT_ID || MOCK_CONFIG.clientId;
-  const redirectUri = (import.meta as any).env?.VITE_KEYCLOAK_REDIRECT_URI || `${window.location.origin}${window.location.pathname}`;
-
-  const buildAuthUrl = (state: string) => {
-    const url = new URL(`${keycloakUrl}/realms/${realm}/protocol/openid-connect/auth`);
+  const buildAuthUrl = (cfg: AuthConfig, state: string, redirectUri: string) => {
+    const url = new URL(`${cfg.keycloakUrl}/realms/${cfg.realm}/protocol/openid-connect/auth`);
     url.searchParams.set('response_type', 'code');
-    url.searchParams.set('client_id', clientId);
+    url.searchParams.set('client_id', cfg.clientId);
     url.searchParams.set('redirect_uri', redirectUri);
     url.searchParams.set('scope', 'openid profile email');
     url.searchParams.set('state', state);
@@ -70,6 +75,64 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
     const run = async () => {
       setLoading(true);
       setError(null);
+
+      const envKeycloakUrl = (import.meta as any).env?.VITE_KEYCLOAK_URL;
+      const envRealm = (import.meta as any).env?.VITE_KEYCLOAK_REALM;
+      const envClientId = (import.meta as any).env?.VITE_KEYCLOAK_CLIENT_ID;
+      const redirectUri = (import.meta as any).env?.VITE_KEYCLOAK_REDIRECT_URI || `${window.location.origin}${window.location.pathname}`;
+
+      const resolveAuthConfig = async (): Promise<AuthConfig | null> => {
+        if (USE_MOCKS) {
+          return {
+            keycloakUrl: MOCK_CONFIG.keycloakUrl,
+            realm: MOCK_CONFIG.realm,
+            clientId: MOCK_CONFIG.clientId,
+            allowedGroups: DEFAULT_ALLOWED_GROUPS
+          };
+        }
+
+        try {
+          const res = await fetch('/api/v1/auth/config', { headers: { 'Accept': 'application/json' } });
+          if (res.ok) {
+            const data = await res.json();
+            const keycloakUrl = data?.keycloak_url;
+            const realm = data?.realm;
+            const clientId = data?.client_id;
+            if (keycloakUrl && realm && clientId) {
+              const allowedGroups = Array.isArray(data?.allowed_groups)
+                ? data.allowed_groups.filter((group: string) => typeof group === 'string' && group.length > 0)
+                : [];
+              return {
+                keycloakUrl,
+                realm,
+                clientId,
+                allowedGroups: allowedGroups.length ? allowedGroups : DEFAULT_ALLOWED_GROUPS
+              };
+            }
+          }
+        } catch (err) {
+          console.warn('Failed to load auth config', err);
+        }
+
+        if (envKeycloakUrl && envRealm && envClientId) {
+          return {
+            keycloakUrl: envKeycloakUrl,
+            realm: envRealm,
+            clientId: envClientId,
+            allowedGroups: DEFAULT_ALLOWED_GROUPS
+          };
+        }
+
+        return null;
+      };
+
+      const cfg = await resolveAuthConfig();
+      if (!cfg) {
+        setError('Auth configuration unavailable. Ensure the backend is running and /api/v1/auth/config is reachable.');
+        setLoading(false);
+        return;
+      }
+      setAuthConfig(cfg);
 
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get('code');
@@ -119,7 +182,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
 
       const newState = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
       sessionStorage.setItem('kubelens_oauth_state', newState);
-      window.location.href = buildAuthUrl(newState);
+      window.location.href = buildAuthUrl(cfg, newState, redirectUri);
     };
 
     run();
@@ -134,7 +197,10 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
     );
   }
 
-  if (error || !user || !user.groups.includes('k8s-logs-access')) {
+  const allowedGroups = authConfig?.allowedGroups?.length ? authConfig.allowedGroups : DEFAULT_ALLOWED_GROUPS;
+  const hasAccess = user?.groups?.some((group) => allowedGroups.includes(group));
+
+  if (error || !user || !hasAccess) {
     const missingToken = !user?.accessToken;
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-6 text-center">
@@ -147,7 +213,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
               <>No access token was found. Please sign in again to access <strong>KubeLens</strong>.</>
             ) : (
               <>Your account does not have the required permissions to access <strong>KubeLens</strong>. 
-              You must belong to the <code>k8s-logs-access</code> Keycloak group.</>
+              You must belong to one of the <code>{allowedGroups.join(', ')}</code> Keycloak groups.</>
             )}
           </p>
           <button 
@@ -158,7 +224,12 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
               }
               const newState = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
               sessionStorage.setItem('kubelens_oauth_state', newState);
-              window.location.href = buildAuthUrl(newState);
+              const redirectUri = (import.meta as any).env?.VITE_KEYCLOAK_REDIRECT_URI || `${window.location.origin}${window.location.pathname}`;
+              if (authConfig) {
+                window.location.href = buildAuthUrl(authConfig, newState, redirectUri);
+              } else {
+                window.location.reload();
+              }
             }}
             className="px-6 py-2 bg-slate-700 hover:bg-slate-600 rounded-lg transition-colors font-medium"
           >

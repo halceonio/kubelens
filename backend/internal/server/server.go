@@ -34,9 +34,11 @@ func New(cfg *config.Config, verifier *auth.Verifier, client *kubernetes.Clients
 
 	sessionHandler := api.NewSessionHandler(sessions, cfg.Session.MaxBytes)
 	authHandler := api.NewAuthHandler(cfg)
+	authConfigHandler := api.NewAuthConfigHandler(cfg)
 	configHandler := api.NewConfigHandler(cfg)
 	mux.Handle("/api/v1/session", auth.Middleware(verifier)(sessionHandler))
 	mux.Handle("/api/v1/auth/token", authHandler)
+	mux.Handle("/api/v1/auth/config", authConfigHandler)
 	mux.Handle("/api/v1/config", auth.Middleware(verifier)(configHandler))
 	kubeHandler := auth.Middleware(verifier)(api.NewKubeHandler(cfg, client))
 	mux.Handle("/api/v1/namespaces", kubeHandler)
