@@ -364,6 +364,24 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [searchQuery, setSearchQuery] = useState('');
   const [activeMatchOffset, setActiveMatchOffset] = useState(0);
 
+  const densityConfig = useMemo(() => {
+    switch (density) {
+      case 'smaller':
+        return { fontSize: 9, lineHeight: 1.05, rowHeight: 22 };
+      case 'small':
+        return { fontSize: 10, lineHeight: 1.1, rowHeight: 24 };
+      case 'large':
+        return { fontSize: 12, lineHeight: 1.25, rowHeight: 30 };
+      case 'larger':
+        return { fontSize: 13, lineHeight: 1.3, rowHeight: 32 };
+      default:
+        return { fontSize: 11, lineHeight: 1.2, rowHeight: 26 };
+    }
+  }, [density]);
+
+  const rowHeight = densityConfig.rowHeight;
+  const wrapHeight = Math.round(rowHeight * 2.1);
+
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
   
@@ -1077,20 +1095,3 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
 };
 
 export default LogView;
-  const densityConfig = useMemo(() => {
-    switch (density) {
-      case 'smaller':
-        return { fontSize: 9, lineHeight: 1.05, rowHeight: 22 };
-      case 'small':
-        return { fontSize: 10, lineHeight: 1.1, rowHeight: 24 };
-      case 'large':
-        return { fontSize: 12, lineHeight: 1.25, rowHeight: 30 };
-      case 'larger':
-        return { fontSize: 13, lineHeight: 1.3, rowHeight: 32 };
-      default:
-        return { fontSize: 11, lineHeight: 1.2, rowHeight: 26 };
-    }
-  }, [density]);
-
-  const rowHeight = densityConfig.rowHeight;
-  const wrapHeight = Math.round(rowHeight * 2.1);
