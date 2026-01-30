@@ -23,6 +23,7 @@ interface RowData {
   selectedIndices: Set<number>;
   onRowClick: (index: number, event: React.MouseEvent) => void;
   showTimestamp: boolean;
+  showDetails: boolean;
   isApp: boolean;
   isWrapping: boolean;
   searchQuery: string;
@@ -272,7 +273,7 @@ const renderAnsiWithHighlight = (text: string, query: string) => {
 };
 
 const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSProperties; data: RowData }) => {
-  const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, isApp, isWrapping, searchQuery, activeMatchIndex } = data;
+  const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, showDetails, isApp, isWrapping, searchQuery, activeMatchIndex } = data;
   const log = logs[index];
   
   if (!log) return <div style={style} />;
@@ -287,7 +288,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
     <div 
       style={style} 
       onClick={(e) => onRowClick(index, e)}
-      className={`flex gap-3 md:gap-4 group hover:bg-white/5 px-2 items-start py-1 mono text-[10px] md:text-[11px] leading-tight overflow-hidden border-b border-white/[0.03] cursor-pointer select-none transition-colors ${
+      className={`flex gap-3 md:gap-4 group hover:bg-white/5 px-2 items-start py-1 mono text-[10px] md:text-[11px] leading-tight overflow-x-auto overflow-y-hidden border-b border-white/[0.03] cursor-pointer select-none transition-colors ${
         isActiveMatch ? 'bg-sky-500/20 border-sky-500/40' : isSelected ? 'bg-sky-500/30 border-sky-500/50' : isTerminated ? 'opacity-40' : ''
       }`}
     >
@@ -297,29 +298,31 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
         </span>
       )}
       
-      <div className="flex items-start gap-3 md:gap-4 shrink-0">
-        {isApp && (
-          <span 
-            className={`font-bold select-none px-2 py-0.5 rounded w-24 md:w-32 lg:w-48 truncate text-left border shrink-0 ${
-              isTerminated 
-              ? 'text-slate-500 bg-slate-800/50 border-slate-700/50' 
-              : 'text-sky-500 bg-sky-500/10 border-sky-500/20'
-            }`} 
-            title={log.podName + (isTerminated ? ' (Terminated)' : '')}
-          >
-            {log.podName}
+      {showDetails && (
+        <div className="flex items-start gap-3 md:gap-4 shrink-0">
+          {isApp && (
+            <span 
+              className={`font-bold select-none px-2 py-0.5 rounded w-24 md:w-32 lg:w-48 truncate text-left border shrink-0 ${
+                isTerminated 
+                ? 'text-slate-500 bg-slate-800/50 border-slate-700/50' 
+                : 'text-sky-500 bg-sky-500/10 border-sky-500/20'
+              }`} 
+              title={log.podName + (isTerminated ? ' (Terminated)' : '')}
+            >
+              {log.podName}
+            </span>
+          )}
+          <span className={`font-bold shrink-0 w-12 md:w-16 select-none pt-0.5 ${
+            isTerminated 
+              ? 'text-slate-600' 
+              : log.level === 'ERROR' ? 'text-red-400' : log.level === 'WARNING' ? 'text-amber-400' : 'text-slate-400'
+          }`}>
+            {isMarker ? 'MARK' : log.level}
           </span>
-        )}
-        <span className={`font-bold shrink-0 w-12 md:w-16 select-none pt-0.5 ${
-          isTerminated 
-            ? 'text-slate-600' 
-            : log.level === 'ERROR' ? 'text-red-400' : log.level === 'WARNING' ? 'text-amber-400' : 'text-slate-400'
-        }`}>
-          {isMarker ? 'MARK' : log.level}
-        </span>
-      </div>
+        </div>
+      )}
       
-      <span className={`pt-0.5 ${isWrapping ? 'whitespace-normal break-all' : 'truncate'} ${isMarker ? 'text-sky-300 italic' : isTerminated ? 'text-slate-500 italic' : 'text-slate-300'}`}>
+      <span className={`pt-0.5 ${isWrapping ? 'whitespace-normal break-all' : 'whitespace-nowrap'} ${isMarker ? 'text-sky-300 italic' : isTerminated ? 'text-slate-500 italic' : 'text-slate-300'}`}>
         {renderAnsiWithHighlight(log.message, searchQuery)}
       </span>
     </div>
@@ -342,6 +345,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [isWrapping, setIsWrapping] = useState(false);
   const [showTimestamp, setShowTimestamp] = useState(true);
+  const [showDetails, setShowDetails] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'paused' | 'stale'>('connecting');
   const [isPaused, setIsPaused] = useState(false);
@@ -658,7 +662,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   useEffect(() => {
     setSelectedIndices(new Set());
     setLastSelectedIndex(null);
-  }, [filter, selectedLevel, selectedPods]);
+  }, [filter, selectedLevel, selectedPods, showDetails, showTimestamp]);
 
   useEffect(() => {
     if (isAutoScroll && listRef.current && filteredLogs.length > 0) {
@@ -715,6 +719,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     selectedIndices,
     onRowClick: handleRowClick,
     showTimestamp,
+    showDetails,
     isApp,
     isWrapping,
     searchQuery,
@@ -918,17 +923,19 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
           </div>
         ) : (
           dimensions.height > 0 && dimensions.width > 0 && FixedSizeList && (
-            <FixedSizeList
-              ref={listRef}
-              height={dimensions.height - 16}
-              itemCount={filteredLogs.length}
-              itemSize={isWrapping ? 54 : 26}
-              width={dimensions.width - 16}
-              className="custom-scrollbar"
-              itemData={rowData}
-            >
-              {LogRow}
-            </FixedSizeList>
+            <div className="h-full w-full overflow-x-auto overflow-y-hidden">
+              <FixedSizeList
+                ref={listRef}
+                height={dimensions.height - 16}
+                itemCount={filteredLogs.length}
+                itemSize={isWrapping ? 54 : 26}
+                width={Math.max(dimensions.width - 16, 800)}
+                className="custom-scrollbar"
+                itemData={rowData}
+              >
+                {LogRow}
+              </FixedSizeList>
+            </div>
           )
         )}
       </div>
@@ -963,6 +970,16 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               className="w-3 h-3 rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 dark:text-sky-500 focus:ring-0 focus:ring-offset-0 transition-colors"
             />
             <span className="text-[10px] font-bold text-slate-500 uppercase group-hover:text-slate-700 dark:group-hover:text-slate-400 hidden sm:inline">Time</span>
+          </label>
+
+          <label className="flex items-center gap-2 cursor-pointer group">
+            <input
+              type="checkbox"
+              checked={showDetails}
+              onChange={(e) => setShowDetails(e.target.checked)}
+              className="w-3 h-3 rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 dark:text-sky-500 focus:ring-0 focus:ring-offset-0 transition-colors"
+            />
+            <span className="text-[10px] font-bold text-slate-500 uppercase group-hover:text-slate-700 dark:group-hover:text-slate-400 hidden sm:inline">Details</span>
           </label>
 
           <div className="text-[10px] text-slate-400 dark:text-slate-600 font-mono">
