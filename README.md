@@ -23,6 +23,7 @@ Many enterprise teams need quick insight into application behavior but should no
 - Tailwind CSS
 - `react-window` for virtualization
 - Go backend (SSE, session storage, auth enforcement)
+- Charmbracelet `log` for structured, colored backend logging
 - Nginx + supervisor for in-cluster single-pod runtime
 
 ## Repo structure
@@ -143,6 +144,10 @@ kubernetes:
 - Set `kubernetes.api_cache.metadata_only: true` to return lightweight metadata lists (full details are fetched on demand).
 - Prometheus-style cache metrics are exposed at `GET /api/v1/metrics`.
 - Shared log workers can be enabled with `logs.use_redis_streams: true` (requires `cache.redis_url` or `logs.redis_url`).
+
+## Logging
+- Backend logs are structured and colorized using Charmbracelet `log`.
+- Nginx access logs for `/healthz` and `/readyz` are disabled to reduce noise in container output.
 
 ## Documentation
 - `docs/index.md` entry point
