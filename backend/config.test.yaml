@@ -1,0 +1,48 @@
+auth:
+  keycloak_url: "https://keycloak.halceon.io"
+  realm: "platforms"
+  client_id: "kubelens"
+  client_secret: "9NIzSlYlsPIMfHCnH82ObwvBeRnKqy7g"
+  allows_groups:
+    - "k8s-logs-access"
+  allowed_secrets_groups:
+    - "k8s-admin-access"
+
+storage:
+  database_url: "sqlite://./data/kubelens.sqlite"
+
+cache:
+  enabled: true
+  redis_url: "redis://localhost:6379/0"
+
+kubernetes:
+  cluster_name: "halceon"
+  allowed_namespaces:
+    - "ai-system"
+    - "apps"
+    - "api"
+    - "db"
+    - "internal-apps"
+
+  app_groups:
+    enabled: true
+    labels:
+      selector: "app.sgz.ai/name"
+      name: "app.sgz.ai/displayname"
+      environment: "app.sgz.ai/env"
+
+  pod_filters:
+    include_regex: ".*"
+    exclude_labels:
+      - "app.kubernetes.io/part-of=dragonfly"
+      - "cnpg.io/podRole=pooler"
+      - "heritage=Helm"
+
+  app_filters:
+    include_regex: ".*"
+    exclude_labels:
+      - "app.kubernetes.io/part-of=dragonfly"
+      - "cnpg.io/podRole=pooler"
+      - "heritage=Helm"
+
+  label_prefix: "app.sgz.io"
