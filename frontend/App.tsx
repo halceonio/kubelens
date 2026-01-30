@@ -42,7 +42,12 @@ const App: React.FC = () => {
   const [savedViews, setSavedViews] = useState<SavedView[]>([]);
   const [activeViewId, setActiveViewId] = useState<string | null>(null);
   const [viewFilters, setViewFilters] = useState<ViewFilters>({ logLevel: 'ALL' });
-  const [logViewPrefs, setLogViewPrefs] = useState<LogViewPreferences>({ density: 'default' });
+  const [logViewPrefs, setLogViewPrefs] = useState<LogViewPreferences>({
+    density: 'default',
+    wrap: false,
+    show_timestamp: true,
+    show_details: true
+  });
 
   // Apply theme to document
   useEffect(() => {
@@ -396,7 +401,7 @@ const App: React.FC = () => {
     setSavedViews([]);
     setViewFilters({ logLevel: 'ALL' });
     setActiveViewId(null);
-    setLogViewPrefs({ density: 'default' });
+    setLogViewPrefs({ density: 'default', wrap: false, show_timestamp: true, show_details: true });
   }, [sessionToken]);
 
   const handleSaveView = useCallback((name: string) => {
@@ -532,6 +537,38 @@ const App: React.FC = () => {
                 </svg>
               </button>
 
+              <div className="hidden md:flex items-center gap-2 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-lg px-2 py-1 text-[10px] text-slate-500 dark:text-slate-400">
+                <button
+                  onClick={() => setLogViewPrefs(prev => ({ ...prev, wrap: !prev.wrap }))}
+                  className={`px-1.5 py-0.5 rounded uppercase font-bold ${logViewPrefs.wrap ? 'bg-sky-500/15 text-sky-500' : 'text-slate-400'}`}
+                >
+                  Wrap
+                </button>
+                <button
+                  onClick={() => setLogViewPrefs(prev => ({ ...prev, show_timestamp: !prev.show_timestamp }))}
+                  className={`px-1.5 py-0.5 rounded uppercase font-bold ${logViewPrefs.show_timestamp ? 'bg-sky-500/15 text-sky-500' : 'text-slate-400'}`}
+                >
+                  Time
+                </button>
+                <button
+                  onClick={() => setLogViewPrefs(prev => ({ ...prev, show_details: !prev.show_details }))}
+                  className={`px-1.5 py-0.5 rounded uppercase font-bold ${logViewPrefs.show_details ? 'bg-sky-500/15 text-sky-500' : 'text-slate-400'}`}
+                >
+                  Detail
+                </button>
+                <select
+                  value={logViewPrefs.density || 'default'}
+                  onChange={(e) => setLogViewPrefs(prev => ({ ...prev, density: e.target.value as LogViewPreferences['density'] }))}
+                  className="bg-white/70 dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded px-1 py-0.5 text-[10px]"
+                >
+                  <option value="default">Default</option>
+                  <option value="small">Small</option>
+                  <option value="smaller">Smaller</option>
+                  <option value="large">Large</option>
+                  <option value="larger">Larger</option>
+                </select>
+              </div>
+
               <div className="flex items-center gap-3">
                 <div className="hidden sm:block text-right">
                   <p className="text-xs font-bold text-slate-700 dark:text-slate-300 leading-none mb-0.5">
@@ -577,7 +614,9 @@ const App: React.FC = () => {
                     initialLogLevel={viewFilters.logLevel}
                     onLogLevelChange={handleLogLevelChange}
                     density={logViewPrefs.density}
-                    onDensityChange={(density) => setLogViewPrefs(prev => ({ ...prev, density }))}
+                    globalWrap={logViewPrefs.wrap}
+                    globalShowTimestamp={logViewPrefs.show_timestamp}
+                    globalShowDetails={logViewPrefs.show_details}
                   />
                 </div>
               ))

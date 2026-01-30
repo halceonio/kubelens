@@ -85,6 +85,9 @@ export interface ViewFilters {
 
 export interface LogViewPreferences {
   density?: 'default' | 'small' | 'smaller' | 'large' | 'larger';
+  wrap?: boolean;
+  show_timestamp?: boolean;
+  show_details?: boolean;
 }
 
 export interface ResourceIdentifier {

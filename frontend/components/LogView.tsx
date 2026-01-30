@@ -14,7 +14,9 @@ interface LogViewProps {
   initialLogLevel?: LogLevel | 'ALL';
   onLogLevelChange?: (level: LogLevel | 'ALL') => void;
   density?: 'default' | 'small' | 'smaller' | 'large' | 'larger';
-  onDensityChange?: (density: 'default' | 'small' | 'smaller' | 'large' | 'larger') => void;
+  globalWrap?: boolean;
+  globalShowTimestamp?: boolean;
+  globalShowDetails?: boolean;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -339,7 +341,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', onDensityChange }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', globalWrap = false, globalShowTimestamp = true, globalShowDetails = true }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
@@ -353,9 +355,9 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [selectedContainer, setSelectedContainer] = useState<string>('');
   
   const [isAutoScroll, setIsAutoScroll] = useState(true);
-  const [isWrapping, setIsWrapping] = useState(false);
-  const [showTimestamp, setShowTimestamp] = useState(true);
-  const [showDetails, setShowDetails] = useState(true);
+  const [wrapMode, setWrapMode] = useState<'global' | 'on' | 'off'>('global');
+  const [timestampMode, setTimestampMode] = useState<'global' | 'on' | 'off'>('global');
+  const [detailsMode, setDetailsMode] = useState<'global' | 'on' | 'off'>('global');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [streamStatus, setStreamStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'paused' | 'stale'>('connecting');
   const [isPaused, setIsPaused] = useState(false);
@@ -690,7 +692,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   useEffect(() => {
     setSelectedIndices(new Set());
     setLastSelectedIndex(null);
-  }, [filter, selectedLevel, selectedPods, showDetails, showTimestamp]);
+  }, [filter, selectedLevel, selectedPods, wrapMode, timestampMode, detailsMode, globalWrap, globalShowTimestamp, globalShowDetails]);
 
   useEffect(() => {
     if (isAutoScroll && listRef.current && filteredLogs.length > 0) {
@@ -741,15 +743,19 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   };
 
 
+  const effectiveWrap = wrapMode === 'global' ? globalWrap : wrapMode === 'on';
+  const effectiveShowTimestamp = timestampMode === 'global' ? globalShowTimestamp : timestampMode === 'on';
+  const effectiveShowDetails = detailsMode === 'global' ? globalShowDetails : detailsMode === 'on';
+
   const rowData: RowData = {
     logs: filteredLogs,
     terminatedPods,
     selectedIndices,
     onRowClick: handleRowClick,
-    showTimestamp,
-    showDetails,
+    showTimestamp: effectiveShowTimestamp,
+    showDetails: effectiveShowDetails,
     isApp,
-    isWrapping,
+    isWrapping: effectiveWrap,
     searchQuery,
     activeMatchIndex,
     densityStyle: { fontSize: `${densityConfig.fontSize}px`, lineHeight: densityConfig.lineHeight }
@@ -963,7 +969,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
                 ref={listRef}
                 height={dimensions.height - 16}
                 itemCount={filteredLogs.length}
-                itemSize={isWrapping ? wrapHeight : rowHeight}
+                itemSize={effectiveWrap ? wrapHeight : rowHeight}
                 width={dimensions.width - 16}
                 className="custom-scrollbar"
                 itemData={rowData}
@@ -986,36 +992,45 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
             />
             <span className="text-[10px] font-bold text-slate-500 uppercase group-hover:text-slate-700 dark:group-hover:text-slate-400 hidden sm:inline">Auto-scroll</span>
           </label>
-          
-          <label className="flex items-center gap-2 cursor-pointer group">
-            <input 
-              type="checkbox" 
-              checked={isWrapping} 
-              onChange={(e) => setIsWrapping(e.target.checked)}
-              className="w-3 h-3 rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 dark:text-sky-500 focus:ring-0 focus:ring-offset-0 transition-colors"
-            />
-            <span className="text-[10px] font-bold text-slate-500 uppercase group-hover:text-slate-700 dark:group-hover:text-slate-400 hidden sm:inline">Wrap</span>
-          </label>
 
-          <label className="flex items-center gap-2 cursor-pointer group">
-            <input 
-              type="checkbox" 
-              checked={showTimestamp} 
-              onChange={(e) => setShowTimestamp(e.target.checked)}
-              className="w-3 h-3 rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 dark:text-sky-500 focus:ring-0 focus:ring-offset-0 transition-colors"
-            />
-            <span className="text-[10px] font-bold text-slate-500 uppercase group-hover:text-slate-700 dark:group-hover:text-slate-400 hidden sm:inline">Time</span>
-          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-slate-400 uppercase">Wrap</span>
+            <select
+              value={wrapMode}
+              onChange={(e) => setWrapMode(e.target.value as any)}
+              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-[9px] text-slate-600 dark:text-slate-400"
+            >
+              <option value="global">Default</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
 
-          <label className="flex items-center gap-2 cursor-pointer group">
-            <input
-              type="checkbox"
-              checked={showDetails}
-              onChange={(e) => setShowDetails(e.target.checked)}
-              className="w-3 h-3 rounded bg-white dark:bg-slate-800 border-slate-300 dark:border-slate-700 text-sky-600 dark:text-sky-500 focus:ring-0 focus:ring-offset-0 transition-colors"
-            />
-            <span className="text-[10px] font-bold text-slate-500 uppercase group-hover:text-slate-700 dark:group-hover:text-slate-400 hidden sm:inline">Details</span>
-          </label>
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-slate-400 uppercase">Time</span>
+            <select
+              value={timestampMode}
+              onChange={(e) => setTimestampMode(e.target.value as any)}
+              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-[9px] text-slate-600 dark:text-slate-400"
+            >
+              <option value="global">Default</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <span className="text-[9px] text-slate-400 uppercase">Detail</span>
+            <select
+              value={detailsMode}
+              onChange={(e) => setDetailsMode(e.target.value as any)}
+              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-1.5 py-0.5 text-[9px] text-slate-600 dark:text-slate-400"
+            >
+              <option value="global">Default</option>
+              <option value="on">On</option>
+              <option value="off">Off</option>
+            </select>
+          </div>
 
           <div className="text-[10px] text-slate-400 dark:text-slate-600 font-mono">
             {filteredLogs.length} entries
@@ -1028,20 +1043,6 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         </div>
         
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-1.5">
-            <span className="text-[9px] text-slate-400 uppercase">Size</span>
-            <select
-              value={density}
-              onChange={(e) => onDensityChange?.(e.target.value as any)}
-              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400"
-            >
-              <option value="default">Default</option>
-              <option value="small">Small</option>
-              <option value="smaller">Smaller</option>
-              <option value="large">Large</option>
-              <option value="larger">Larger</option>
-            </select>
-          </div>
           {selectedIndices.size > 0 && (
             <button
               onClick={copySelectedLogs}
