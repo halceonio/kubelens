@@ -87,8 +87,8 @@
 }
 
 .md-typeset pre code,
-.md-typeset pre code span {
-  color: var(--md-code-fg-color);
+.md-typeset pre code * {
+  color: var(--md-code-fg-color) !important;
 }
 
 [data-md-color-scheme="slate"] .md-typeset pre {
