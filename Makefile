@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview kube-sa
+.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview kube-sa keycloak-token
 
 help: ## Show available commands
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*##"}; {printf "%-22s %s\n", $$1, $$2}'
@@ -33,3 +33,6 @@ kube-sa: ## Provision service account and export kubeconfig (NS and SA required)
 		exit 1; \
 	fi
 	./scripts/provision-kubelens-sa.sh $(NS) $(SA) $(OUT)
+
+keycloak-token: ## Fetch a Keycloak access token via password grant (requires env vars)
+	./scripts/get-keycloak-token.sh
