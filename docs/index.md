@@ -9,6 +9,7 @@ KubeLens is a read-only Kubernetes log analyzer that provides a focused UI for l
 - [Configuration](configuration.md)
 - [Architecture](architecture.md)
 - [Screenshots](screenshots.md)
+- [Changelog](changelogs.md)
 - [GitHub Pages Publishing](github-pages.md)
 
 ## Project Layout
