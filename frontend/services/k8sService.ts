@@ -67,14 +67,20 @@ export const getNamespaces = async (token?: string | null): Promise<Namespace[]>
   }
 };
 
-export const getPods = async (namespace: string, token?: string | null): Promise<Pod[]> => {
+export const getPods = async (
+  namespace: string,
+  token?: string | null,
+  opts?: { light?: boolean }
+): Promise<Pod[]> => {
   if (!token && !USE_MOCKS) {
     throw new Error('Missing access token');
   }
 
   if (token) {
     try {
-      return await fetchJSON<Pod[]>(`${API_BASE}/namespaces/${namespace}/pods`, token);
+      const light = opts?.light ?? true;
+      const url = `${API_BASE}/namespaces/${namespace}/pods${light ? '?light=true' : ''}`;
+      return await fetchJSON<Pod[]>(url, token);
     } catch (err) {
       console.warn('Failed to load pods from backend', err);
       if (!USE_MOCKS) throw err;
@@ -133,18 +139,24 @@ export const getPodByName = async (
       console.warn('Failed to load pod from backend', err);
     }
   }
-  const pods = await getPods(namespace);
+  const pods = await getPods(namespace, token, { light: false });
   return pods.find(p => p.name === name) || null;
 };
 
-export const getApps = async (namespace: string, token?: string | null): Promise<AppResource[]> => {
+export const getApps = async (
+  namespace: string,
+  token?: string | null,
+  opts?: { light?: boolean }
+): Promise<AppResource[]> => {
   if (!token && !USE_MOCKS) {
     throw new Error('Missing access token');
   }
 
   if (token) {
     try {
-      return await fetchJSON<AppResource[]>(`${API_BASE}/namespaces/${namespace}/apps`, token);
+      const light = opts?.light ?? true;
+      const url = `${API_BASE}/namespaces/${namespace}/apps${light ? '?light=true' : ''}`;
+      return await fetchJSON<AppResource[]>(url, token);
     } catch (err) {
       console.warn('Failed to load apps from backend', err);
       if (!USE_MOCKS) throw err;
@@ -247,7 +259,7 @@ export const getAppByName = async (
       console.warn('Failed to load app from backend', err);
     }
   }
-  const apps = await getApps(namespace);
+  const apps = await getApps(namespace, token, { light: false });
   return apps.find(a => a.name === name) || null;
 };
 

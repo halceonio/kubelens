@@ -346,19 +346,39 @@ const App: React.FC = () => {
     restore();
   }, [sessionReady, sessionToken, remoteSession]);
 
+  const ensureResourceDetails = useCallback(async (resource: Pod | AppResource) => {
+    if (!sessionToken) return resource;
+    const isApp = 'type' in resource;
+    const needsDetails = resource.light || (isApp ? (resource as AppResource).podNames?.length === 0 : (resource as Pod).containers?.length === 0);
+    if (!needsDetails) return resource;
+
+    try {
+      const detailed = isApp
+        ? await getAppByName(resource.namespace, resource.name, sessionToken)
+        : await getPodByName(resource.namespace, resource.name, sessionToken);
+      return detailed || resource;
+    } catch (err) {
+      console.warn('Failed to load resource details', err);
+      return resource;
+    }
+  }, [sessionToken]);
+
   const handleResourceSelect = useCallback((resource: Pod | AppResource) => {
-    setActiveResources(prev => {
-      if (prev.some(p => p.name === resource.name)) {
-        // Move selected resource to front so it's visible in restricted grid
-        return [resource, ...prev.filter(p => p.name !== resource.name)];
-      }
-      if (prev.length >= 8) { // Soft limit for total open tabs
-        alert("Too many open tabs. Please close some.");
-        return prev;
-      }
-      return [resource, ...prev];
-    });
-  }, []);
+    void (async () => {
+      const detailed = await ensureResourceDetails(resource);
+      setActiveResources(prev => {
+        if (prev.some(p => p.name === detailed.name)) {
+          // Move selected resource to front so it's visible in restricted grid
+          return [detailed, ...prev.filter(p => p.name !== detailed.name)];
+        }
+        if (prev.length >= 8) { // Soft limit for total open tabs
+          alert("Too many open tabs. Please close some.");
+          return prev;
+        }
+        return [detailed, ...prev];
+      });
+    })();
+  }, [ensureResourceDetails]);
 
   const closeResource = useCallback((name: string) => {
     setActiveResources(prev => prev.filter(p => p.name !== name));

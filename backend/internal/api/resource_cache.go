@@ -27,6 +27,7 @@ type resourceCache struct {
 	crdTTL      time.Duration
 	retryCount  int
 	retryBase   time.Duration
+	stats       *resourceStats
 	pods        map[string]cacheEntry[corev1.Pod]
 	deployments map[string]cacheEntry[appsv1.Deployment]
 	statefuls   map[string]cacheEntry[appsv1.StatefulSet]
@@ -39,13 +40,14 @@ type resourceCache struct {
 	dfGroup     singleflight.Group
 }
 
-func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration) *resourceCache {
+func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration, stats *resourceStats) *resourceCache {
 	return &resourceCache{
 		podTTL:      podTTL,
 		appTTL:      appTTL,
 		crdTTL:      crdTTL,
 		retryCount:  retryCount,
 		retryBase:   retryBase,
+		stats:       stats,
 		pods:        map[string]cacheEntry[corev1.Pod]{},
 		deployments: map[string]cacheEntry[appsv1.Deployment]{},
 		statefuls:   map[string]cacheEntry[appsv1.StatefulSet]{},
@@ -170,12 +172,18 @@ func (c *resourceCache) doDragonfly(namespace string, fn func() ([]dragonflyReso
 
 func listPods(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]corev1.Pod, error) {
 	var pods *corev1.PodList
+	if cache != nil && cache.stats != nil {
+		cache.stats.incPodsAPICall()
+	}
 	err := retryK8s(ctx, cache, func(ctx context.Context) error {
 		var err error
 		pods, err = client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
 		return err
 	})
 	if err != nil {
+		if cache != nil && cache.stats != nil {
+			cache.stats.incPodsAPIErr()
+		}
 		return nil, err
 	}
 	if pods == nil {
@@ -186,12 +194,18 @@ func listPods(ctx context.Context, client *kubernetes.Clientset, namespace strin
 
 func listDeployments(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]appsv1.Deployment, error) {
 	var deployments *appsv1.DeploymentList
+	if cache != nil && cache.stats != nil {
+		cache.stats.incDepAPICall()
+	}
 	err := retryK8s(ctx, cache, func(ctx context.Context) error {
 		var err error
 		deployments, err = client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
 		return err
 	})
 	if err != nil {
+		if cache != nil && cache.stats != nil {
+			cache.stats.incDepAPIErr()
+		}
 		return nil, err
 	}
 	if deployments == nil {
@@ -202,12 +216,18 @@ func listDeployments(ctx context.Context, client *kubernetes.Clientset, namespac
 
 func listStatefulSets(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]appsv1.StatefulSet, error) {
 	var sets *appsv1.StatefulSetList
+	if cache != nil && cache.stats != nil {
+		cache.stats.incStsAPICall()
+	}
 	err := retryK8s(ctx, cache, func(ctx context.Context) error {
 		var err error
 		sets, err = client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
 		return err
 	})
 	if err != nil {
+		if cache != nil && cache.stats != nil {
+			cache.stats.incStsAPIErr()
+		}
 		return nil, err
 	}
 	if sets == nil {
@@ -227,6 +247,9 @@ func retryK8s(ctx context.Context, cache *resourceCache, fn func(context.Context
 			lastErr = err
 			if !apierrors.IsTooManyRequests(err) {
 				return err
+			}
+			if cache != nil && cache.stats != nil {
+				cache.stats.incThrottleRetry()
 			}
 			delay := cache.retryBase * time.Duration(1<<attempt)
 			jitter := time.Duration(rand.Int63n(int64(cache.retryBase / 2)))

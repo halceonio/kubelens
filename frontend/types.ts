@@ -44,6 +44,7 @@ export interface Pod {
   annotations: Record<string, string>;
   env: Record<string, string>;
   envSecrets?: string[];
+  light?: boolean;
   containers: Container[];
   volumes: VolumeMount[];
   secrets: string[];
@@ -69,6 +70,7 @@ export interface AppResource {
   configMaps: string[];
   containers?: Container[];
   image?: string; // Image tag used if version label is missing
+  light?: boolean;
 }
 
 export interface SavedView {

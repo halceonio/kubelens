@@ -63,6 +63,7 @@ type podResponse struct {
 	ConfigMaps  []string              `json:"configMaps"`
 	Resources   resourceUsage         `json:"resources"`
 	OwnerApp    string                `json:"ownerApp,omitempty"`
+	Light       bool                  `json:"light,omitempty"`
 }
 
 type appResponse struct {
@@ -82,6 +83,7 @@ type appResponse struct {
 	ConfigMaps    []string              `json:"configMaps"`
 	Containers    []containerResponse   `json:"containers,omitempty"`
 	Image         string                `json:"image,omitempty"`
+	Light         bool                  `json:"light,omitempty"`
 }
 
 const (
@@ -196,6 +198,7 @@ func (h *KubeHandler) handlePodsList(w http.ResponseWriter, r *http.Request, nam
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	light := wantsLight(r)
 	pods, err := h.listPodsCached(r.Context(), namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -206,7 +209,11 @@ func (h *KubeHandler) handlePodsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowPod(&pod) {
 			continue
 		}
-		resp = append(resp, h.mapPod(&pod, false, nil, false))
+		if light {
+			resp = append(resp, h.mapPodLite(&pod))
+		} else {
+			resp = append(resp, h.mapPod(&pod, false, nil, false))
+		}
 	}
 	writeJSON(w, resp)
 }
@@ -261,10 +268,13 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 	}
 	ctx := r.Context()
 	resp := []appResponse{}
+	light := wantsLight(r)
 
-	podSnapshot, podErr := h.listPodsCached(ctx, namespace)
-	if podErr != nil {
-		podSnapshot = nil
+	var podSnapshot []corev1.Pod
+	if !light {
+		if pods, err := h.listPodsCached(ctx, namespace); err == nil {
+			podSnapshot = pods
+		}
 	}
 
 	deployments, err := h.listDeploymentsCached(ctx, namespace)
@@ -276,7 +286,11 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(dep.Name, dep.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapDeployment(ctx, &dep, nil, false, podSnapshot))
+		if light {
+			resp = append(resp, h.mapDeploymentLite(&dep))
+		} else {
+			resp = append(resp, h.mapDeployment(ctx, &dep, nil, false, podSnapshot))
+		}
 	}
 
 	statefulSets, err := h.listStatefulSetsCached(ctx, namespace)
@@ -291,7 +305,11 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(sts.Name, sts.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapStatefulSet(ctx, &sts, nil, false, podSnapshot))
+		if light {
+			resp = append(resp, h.mapStatefulSetLite(&sts))
+		} else {
+			resp = append(resp, h.mapStatefulSet(ctx, &sts, nil, false, podSnapshot))
+		}
 	}
 
 	cnpgClusters, err := h.listCnpgClustersCached(ctx, namespace)
@@ -303,7 +321,11 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(cluster.Metadata.Name, cluster.Metadata.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapCnpgCluster(ctx, &cluster, podSnapshot))
+		if light {
+			resp = append(resp, h.mapCnpgClusterLite(&cluster))
+		} else {
+			resp = append(resp, h.mapCnpgCluster(ctx, &cluster, podSnapshot))
+		}
 	}
 
 	dragonflies, err := h.listDragonfliesCached(ctx, namespace)
@@ -315,7 +337,11 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(dragonfly.Metadata.Name, dragonfly.Metadata.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapDragonfly(ctx, &dragonfly, nil, false, podSnapshot))
+		if light {
+			resp = append(resp, h.mapDragonflyLite(&dragonfly))
+		} else {
+			resp = append(resp, h.mapDragonfly(ctx, &dragonfly, nil, false, podSnapshot))
+		}
 	}
 
 	writeJSON(w, resp)
@@ -489,6 +515,32 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 	}
 }
 
+func (h *KubeHandler) mapPodLite(pod *corev1.Pod) podResponse {
+	restarts := int32(0)
+	for _, status := range pod.Status.ContainerStatuses {
+		restarts += status.RestartCount
+	}
+
+	return podResponse{
+		Name:        pod.Name,
+		Namespace:   pod.Namespace,
+		Status:      string(pod.Status.Phase),
+		Restarts:    restarts,
+		Age:         formatAge(pod.CreationTimestamp.Time),
+		Labels:      pod.Labels,
+		Annotations: pod.Annotations,
+		Env:         map[string]string{},
+		EnvSecrets:  []string{},
+		Containers:  []containerResponse{},
+		Volumes:     []volumeMountResponse{},
+		Secrets:     []string{},
+		ConfigMaps:  []string{},
+		Resources:   resourceUsage{},
+		OwnerApp:    ownerRefName(pod.OwnerReferences),
+		Light:       true,
+	}
+}
+
 func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod) appResponse {
 	pods := h.podNamesForSelector(ctx, dep.Namespace, dep.Spec.Selector, podSnapshot)
 	requests, limits := sumResourceRequests(dep.Spec.Template.Spec.Containers)
@@ -525,6 +577,32 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment,
 		ConfigMaps: configMaps,
 		Containers: containers,
 		Image:      image,
+	}
+}
+
+func (h *KubeHandler) mapDeploymentLite(dep *appsv1.Deployment) appResponse {
+	image := ""
+	if len(dep.Spec.Template.Spec.Containers) > 0 {
+		image = dep.Spec.Template.Spec.Containers[0].Image
+	}
+	return appResponse{
+		Name:          dep.Name,
+		Namespace:     dep.Namespace,
+		Type:          "Deployment",
+		Replicas:      derefInt32(dep.Spec.Replicas),
+		ReadyReplicas: dep.Status.ReadyReplicas,
+		PodNames:      []string{},
+		Labels:        dep.Labels,
+		Annotations:   dep.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Containers:    []containerResponse{},
+		Image:         image,
+		Light:         true,
 	}
 }
 
@@ -567,6 +645,32 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 	}
 }
 
+func (h *KubeHandler) mapStatefulSetLite(sts *appsv1.StatefulSet) appResponse {
+	image := ""
+	if len(sts.Spec.Template.Spec.Containers) > 0 {
+		image = sts.Spec.Template.Spec.Containers[0].Image
+	}
+	return appResponse{
+		Name:          sts.Name,
+		Namespace:     sts.Namespace,
+		Type:          "StatefulSet",
+		Replicas:      derefInt32(sts.Spec.Replicas),
+		ReadyReplicas: sts.Status.ReadyReplicas,
+		PodNames:      []string{},
+		Labels:        sts.Labels,
+		Annotations:   sts.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Containers:    []containerResponse{},
+		Image:         image,
+		Light:         true,
+	}
+}
+
 func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, podSnapshot []corev1.Pod) appResponse {
 	pods, _ := h.podNamesForLabel(ctx, cluster.Metadata.Namespace, fmt.Sprintf("%s=%s", cnpgClusterLabelKey, cluster.Metadata.Name), podSnapshot)
 	requests, limits := sumResourceRequirements(cluster.Spec.Resources)
@@ -601,6 +705,31 @@ func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, 
 	}
 }
 
+func (h *KubeHandler) mapCnpgClusterLite(cluster *cnpgCluster) appResponse {
+	image := cluster.Spec.ImageName
+	if image == "" {
+		image = cluster.Status.Image
+	}
+	return appResponse{
+		Name:          cluster.Metadata.Name,
+		Namespace:     cluster.Metadata.Namespace,
+		Type:          "Cluster",
+		Replicas:      derefInt32(cluster.Spec.Instances),
+		ReadyReplicas: cluster.Status.ReadyInstances,
+		PodNames:      []string{},
+		Labels:        cluster.Metadata.Labels,
+		Annotations:   cluster.Metadata.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Image:         image,
+		Light:         true,
+	}
+}
+
 func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod) appResponse {
 	pods, ready := h.podNamesForLabel(ctx, dragonfly.Metadata.Namespace, fmt.Sprintf("%s=%s", dragonflyAppLabelKey, dragonfly.Metadata.Name), podSnapshot)
 	requests, limits := sumResourceRequirements(dragonfly.Spec.Resources)
@@ -630,6 +759,33 @@ func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyReso
 		Secrets:    secretRefs,
 		ConfigMaps: configRefs,
 		Image:      dragonfly.Spec.Image,
+	}
+}
+
+func (h *KubeHandler) mapDragonflyLite(dragonfly *dragonflyResource) appResponse {
+	secretRefs, configRefs := extractEnvRefs(dragonfly.Spec.Env)
+	ready := int32(0)
+	switch strings.ToLower(strings.TrimSpace(dragonfly.Status.Phase)) {
+	case "ready", "running":
+		ready = derefInt32(dragonfly.Spec.Replicas)
+	}
+	return appResponse{
+		Name:          dragonfly.Metadata.Name,
+		Namespace:     dragonfly.Metadata.Namespace,
+		Type:          "Dragonfly",
+		Replicas:      derefInt32(dragonfly.Spec.Replicas),
+		ReadyReplicas: ready,
+		PodNames:      []string{},
+		Labels:        dragonfly.Metadata.Labels,
+		Annotations:   dragonfly.Metadata.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       secretRefs,
+		ConfigMaps:    configRefs,
+		Image:         dragonfly.Spec.Image,
+		Light:         true,
 	}
 }
 
@@ -707,13 +863,22 @@ func podReady(pod *corev1.Pod) bool {
 func (h *KubeHandler) listPodsCached(ctx context.Context, namespace string) ([]corev1.Pod, error) {
 	if h.informers != nil {
 		if items, ok := h.informers.listPods(namespace); ok {
+			if h.stats != nil {
+				h.stats.incPodsInformerHit()
+			}
 			return items, nil
 		}
 	}
 	if h.cache != nil {
 		return h.cache.doPods(namespace, func() ([]corev1.Pod, error) {
 			if items, ok := h.cache.getPods(namespace); ok {
+				if h.stats != nil {
+					h.stats.incPodsCacheHit()
+				}
 				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incPodsCacheMiss()
 			}
 			pods, err := listPods(ctx, h.client, namespace, h.cache)
 			if err != nil {
@@ -740,6 +905,9 @@ func (h *KubeHandler) listPodsBySelectorCached(ctx context.Context, namespace, s
 			return nil, err
 		}
 		if items, ok := h.informers.listPodsBySelector(namespace, sel); ok {
+			if h.stats != nil {
+				h.stats.incPodsInformerHit()
+			}
 			filtered := make([]corev1.Pod, 0, len(items))
 			for _, pod := range items {
 				if !h.allowPod(&pod) {
@@ -790,13 +958,22 @@ func (h *KubeHandler) listPodsBySelectorCached(ctx context.Context, namespace, s
 func (h *KubeHandler) listDeploymentsCached(ctx context.Context, namespace string) ([]appsv1.Deployment, error) {
 	if h.informers != nil {
 		if items, ok := h.informers.listDeployments(namespace); ok {
+			if h.stats != nil {
+				h.stats.incDepInformerHit()
+			}
 			return items, nil
 		}
 	}
 	if h.cache != nil {
 		return h.cache.doDeployments(namespace, func() ([]appsv1.Deployment, error) {
 			if items, ok := h.cache.getDeployments(namespace); ok {
+				if h.stats != nil {
+					h.stats.incDepCacheHit()
+				}
 				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incDepCacheMiss()
 			}
 			deployments, err := listDeployments(ctx, h.client, namespace, h.cache)
 			if err != nil {
@@ -816,13 +993,22 @@ func (h *KubeHandler) listDeploymentsCached(ctx context.Context, namespace strin
 func (h *KubeHandler) listStatefulSetsCached(ctx context.Context, namespace string) ([]appsv1.StatefulSet, error) {
 	if h.informers != nil {
 		if items, ok := h.informers.listStatefulSets(namespace); ok {
+			if h.stats != nil {
+				h.stats.incStsInformerHit()
+			}
 			return items, nil
 		}
 	}
 	if h.cache != nil {
 		return h.cache.doStatefulSets(namespace, func() ([]appsv1.StatefulSet, error) {
 			if items, ok := h.cache.getStatefulSets(namespace); ok {
+				if h.stats != nil {
+					h.stats.incStsCacheHit()
+				}
 				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incStsCacheMiss()
 			}
 			sets, err := listStatefulSets(ctx, h.client, namespace, h.cache)
 			if err != nil {
@@ -843,7 +1029,13 @@ func (h *KubeHandler) listCnpgClustersCached(ctx context.Context, namespace stri
 	if h.cache != nil {
 		return h.cache.doCnpg(namespace, func() ([]cnpgCluster, error) {
 			if items, ok := h.cache.getCnpg(namespace); ok {
+				if h.stats != nil {
+					h.stats.incCnpgCacheHit()
+				}
 				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incCnpgCacheMiss()
 			}
 			clusters, err := h.listCnpgClusters(ctx, namespace)
 			if err != nil {
@@ -864,7 +1056,13 @@ func (h *KubeHandler) listDragonfliesCached(ctx context.Context, namespace strin
 	if h.cache != nil {
 		return h.cache.doDragonfly(namespace, func() ([]dragonflyResource, error) {
 			if items, ok := h.cache.getDragonfly(namespace); ok {
+				if h.stats != nil {
+					h.stats.incDragonCacheHit()
+				}
 				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incDragonCacheMiss()
 			}
 			dragonflies, err := h.listDragonflies(ctx, namespace)
 			if err != nil {
@@ -1131,6 +1329,11 @@ func wantsRevealSecrets(r *http.Request) bool {
 	return val == "true" || val == "1" || val == "yes"
 }
 
+func wantsLight(r *http.Request) bool {
+	val := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("light")))
+	return val == "true" || val == "1" || val == "yes"
+}
+
 func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFromSource, user *auth.User, revealSecrets bool, client *kubernetes.Clientset) (map[string]string, []string) {
 	result := map[string]string{}
 	secretKeys := map[string]struct{}{}
@@ -1289,12 +1492,18 @@ func (h *KubeHandler) fetchPodMetrics(ctx context.Context, namespace, name strin
 func (h *KubeHandler) listCnpgClusters(ctx context.Context, namespace string) ([]cnpgCluster, error) {
 	path := fmt.Sprintf(cnpgClusterListPathFmt, namespace)
 	var data []byte
+	if h.cache != nil && h.cache.stats != nil {
+		h.cache.stats.incCnpgAPICall()
+	}
 	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
 		var err error
 		data, err = h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
 		return err
 	})
 	if err != nil {
+		if h.cache != nil && h.cache.stats != nil && !apierrors.IsNotFound(err) {
+			h.cache.stats.incCnpgAPIErr()
+		}
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		}
@@ -1323,12 +1532,18 @@ func (h *KubeHandler) getCnpgCluster(ctx context.Context, namespace, name string
 func (h *KubeHandler) listDragonflies(ctx context.Context, namespace string) ([]dragonflyResource, error) {
 	path := fmt.Sprintf(dragonflyListPathFmt, namespace)
 	var data []byte
+	if h.cache != nil && h.cache.stats != nil {
+		h.cache.stats.incDragonAPICall()
+	}
 	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
 		var err error
 		data, err = h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
 		return err
 	})
 	if err != nil {
+		if h.cache != nil && h.cache.stats != nil && !apierrors.IsNotFound(err) {
+			h.cache.stats.incDragonAPIErr()
+		}
 		if apierrors.IsNotFound(err) {
 			return nil, nil
 		}
