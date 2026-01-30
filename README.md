@@ -30,6 +30,7 @@ Many enterprise teams need quick insight into application behavior but should no
 - `backend/` API server (auth, sessions, Kubernetes proxy)
 - `docker/` runtime assets (Dockerfile, nginx, supervisor, compose)
 - `refs/` product and backend reference docs
+- `docs/` published documentation (GitHub Pages)
 
 ## Quickstart (local dev)
 1) Configure the backend:
@@ -120,6 +121,12 @@ kubernetes:
 - `logs.default_tail_lines`, `logs.max_tail_lines`, and `logs.max_line_length` default to `10000`.
 - Session persistence supports redis, sqlite, or postgres. With no storage configured, the in-memory store is used.
 - For local testing, `KUBELENS_KUBECONFIG` or `KUBECONFIG` can point to a kubeconfig file.
+
+## Documentation
+- `docs/index.md` entry point
+- `docs/runtime-env.md` backend runtime environment variables
+- `docs/deploy.md` deployment guide
+- `docs/github-pages.md` publishing instructions
 
 ## License
 Internal use only.
