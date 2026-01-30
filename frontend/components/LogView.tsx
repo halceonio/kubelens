@@ -13,6 +13,8 @@ interface LogViewProps {
   config?: UiConfig | null;
   initialLogLevel?: LogLevel | 'ALL';
   onLogLevelChange?: (level: LogLevel | 'ALL') => void;
+  density?: 'default' | 'small' | 'smaller' | 'large' | 'larger';
+  onDensityChange?: (density: 'default' | 'small' | 'smaller' | 'large' | 'larger') => void;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -28,6 +30,7 @@ interface RowData {
   isWrapping: boolean;
   searchQuery: string;
   activeMatchIndex: number | null;
+  densityStyle: React.CSSProperties;
 }
 
 type StreamStats = {
@@ -273,7 +276,7 @@ const renderAnsiWithHighlight = (text: string, query: string) => {
 };
 
 const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSProperties; data: RowData }) => {
-  const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, showDetails, isApp, isWrapping, searchQuery, activeMatchIndex } = data;
+  const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, showDetails, isApp, isWrapping, searchQuery, activeMatchIndex, densityStyle } = data;
   const log = logs[index];
   
   if (!log) return <div style={style} />;
@@ -281,7 +284,8 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   const rowStyle = {
     ...style,
     width: 'max-content',
-    minWidth: '100%'
+    minWidth: '100%',
+    ...densityStyle
   };
 
   const isTerminated = terminatedPods.includes(log.podName);
@@ -335,7 +339,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', onDensityChange }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
@@ -729,7 +733,8 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     isApp,
     isWrapping,
     searchQuery,
-    activeMatchIndex
+    activeMatchIndex,
+    densityStyle: { fontSize: `${densityConfig.fontSize}px`, lineHeight: densityConfig.lineHeight }
   };
 
   const streamMeta = (() => {
@@ -934,7 +939,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
                 ref={listRef}
                 height={dimensions.height - 16}
                 itemCount={filteredLogs.length}
-                itemSize={isWrapping ? 54 : 26}
+                itemSize={isWrapping ? wrapHeight : rowHeight}
                 width={dimensions.width - 16}
                 className="custom-scrollbar"
                 itemData={rowData}
@@ -999,6 +1004,20 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         </div>
         
         <div className="flex items-center gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="text-[9px] text-slate-400 uppercase">Size</span>
+            <select
+              value={density}
+              onChange={(e) => onDensityChange?.(e.target.value as any)}
+              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400"
+            >
+              <option value="default">Default</option>
+              <option value="small">Small</option>
+              <option value="smaller">Smaller</option>
+              <option value="large">Large</option>
+              <option value="larger">Larger</option>
+            </select>
+          </div>
           {selectedIndices.size > 0 && (
             <button
               onClick={copySelectedLogs}
@@ -1058,3 +1077,20 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
 };
 
 export default LogView;
+  const densityConfig = useMemo(() => {
+    switch (density) {
+      case 'smaller':
+        return { fontSize: 9, lineHeight: 1.05, rowHeight: 22 };
+      case 'small':
+        return { fontSize: 10, lineHeight: 1.1, rowHeight: 24 };
+      case 'large':
+        return { fontSize: 12, lineHeight: 1.25, rowHeight: 30 };
+      case 'larger':
+        return { fontSize: 13, lineHeight: 1.3, rowHeight: 32 };
+      default:
+        return { fontSize: 11, lineHeight: 1.2, rowHeight: 26 };
+    }
+  }, [density]);
+
+  const rowHeight = densityConfig.rowHeight;
+  const wrapHeight = Math.round(rowHeight * 2.1);

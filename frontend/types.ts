@@ -83,6 +83,10 @@ export interface ViewFilters {
   logLevel?: LogLevel | 'ALL';
 }
 
+export interface LogViewPreferences {
+  density?: 'default' | 'small' | 'smaller' | 'large' | 'larger';
+}
+
 export interface ResourceIdentifier {
   type: 'pod' | 'app';
   namespace: string;
