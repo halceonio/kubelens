@@ -43,7 +43,7 @@ kubernetes:
 *   **Frontend**: React 18.3.1 (downgraded for stable virtualization compatibility).
 *   **Styling**: Tailwind CSS with a custom manual Light/Dark mode toggle.
 *   **Virtualization**: `react-window` for high-performance log rendering.
-*   **Persistence**: `localStorage` and URL fragments are used to persist open tabs, pinned resources, and UI preferences across sessions.
+*   **Persistence**: Session state is stored via the backend per user, with URL fragments and localStorage used as fallbacks.
 
 ## 🎨 Design Philosophy
 KubeLens follows a "Developer First" aesthetic: high-contrast typography, JetBrains Mono for log data, and a dense, information-rich UI that minimizes clicking while maximizing visibility into system state.

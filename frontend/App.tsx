@@ -412,6 +412,7 @@ const App: React.FC = () => {
                     resource={res} 
                     onClose={() => closeResource(res.name)}
                     isMaximized={visibleResources.length === 1}
+                    accessToken={sessionToken}
                   />
                 </div>
               ))

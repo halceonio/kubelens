@@ -67,7 +67,7 @@ kubernetes:
     enabled: true
     labels:
       selector: "app.logging.k8s.io/group"
-      name: "App Group"
+      name: "app.logging.k8s.io/name"
       environment: "app.logging.k8s.io/environment"
       version: "app.logging.k8s.io/version"
   pod_filters:
