@@ -649,6 +649,8 @@ const App: React.FC = () => {
             resource={inspectingResource}
             onClose={() => setInspectingResource(null)}
             config={uiConfig}
+            accessToken={sessionToken}
+            canViewSecrets={authUser?.canViewSecrets ?? false}
           />
         )}
       </div>

@@ -43,6 +43,7 @@ export interface Pod {
   labels: Record<string, string>;
   annotations: Record<string, string>;
   env: Record<string, string>;
+  envSecrets?: string[];
   containers: Container[];
   volumes: VolumeMount[];
   secrets: string[];
@@ -61,6 +62,7 @@ export interface AppResource {
   labels: Record<string, string>;
   annotations: Record<string, string>;
   env: Record<string, string>;
+  envSecrets?: string[];
   resources: ResourceUsage;
   volumes: VolumeMount[];
   secrets: string[];
@@ -131,4 +133,5 @@ export interface AuthUser {
   groups: string[];
   isAuthenticated: boolean;
   accessToken?: string;
+  canViewSecrets?: boolean;
 }

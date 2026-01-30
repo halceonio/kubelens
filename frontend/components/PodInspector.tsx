@@ -1,20 +1,37 @@
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { Pod, AppResource, UiConfig } from '../types';
 import { DEFAULT_UI_CONFIG } from '../constants';
+import { getPodByName, getAppByName } from '../services/k8sService';
 
 interface PodInspectorProps {
   resource: Pod | AppResource;
   onClose: () => void;
   config?: UiConfig | null;
+  accessToken?: string | null;
+  canViewSecrets?: boolean;
 }
 
 type TabType = 'ENV' | 'LABELS' | 'VOLUMES' | 'RESOURCES' | 'METRICS' | 'PODS';
 
-const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config }) => {
+const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config, accessToken, canViewSecrets }) => {
   const [activeTab, setActiveTab] = useState<TabType>('METRICS');
+  const [displayResource, setDisplayResource] = useState<Pod | AppResource>(resource);
+  const [showSecrets, setShowSecrets] = useState(false);
+  const [secretsLoaded, setSecretsLoaded] = useState(false);
+  const [secretsLoading, setSecretsLoading] = useState(false);
+  const [secretsError, setSecretsError] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const isApp = resource && 'type' in resource;
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
+
+  useEffect(() => {
+    setDisplayResource(resource);
+    setShowSecrets(false);
+    setSecretsLoaded(false);
+    setSecretsError(null);
+    setCopiedKey(null);
+  }, [resource]);
 
   if (!resource) return null;
 
@@ -50,6 +67,55 @@ const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config }
     const l = parseResource(limit);
     if (l <= 0) return 0;
     return Math.min(100, (u / l) * 100);
+  };
+
+  const handleToggleSecrets = async () => {
+    if (!canViewSecrets) return;
+    if (showSecrets) {
+      setShowSecrets(false);
+      return;
+    }
+
+    const envSecrets = displayResource?.envSecrets || [];
+    if (secretsLoaded || envSecrets.length === 0) {
+      setShowSecrets(true);
+      return;
+    }
+    if (!accessToken) {
+      setSecretsError('Missing access token');
+      return;
+    }
+
+    setSecretsLoading(true);
+    setSecretsError(null);
+    try {
+      const updated = isApp
+        ? await getAppByName(displayResource.namespace, displayResource.name, accessToken, { revealSecrets: true })
+        : await getPodByName(displayResource.namespace, displayResource.name, accessToken, { revealSecrets: true });
+      if (updated) {
+        setDisplayResource(updated);
+        setSecretsLoaded(true);
+        setShowSecrets(true);
+      } else {
+        setSecretsError('Unable to load secret values.');
+      }
+    } catch (err) {
+      setSecretsError('Unable to load secret values.');
+    } finally {
+      setSecretsLoading(false);
+    }
+  };
+
+  const handleCopy = async (key: string, value: string) => {
+    try {
+      await navigator.clipboard.writeText(value);
+      setCopiedKey(key);
+      setTimeout(() => {
+        setCopiedKey((prev) => (prev === key ? null : prev));
+      }, 1500);
+    } catch (err) {
+      console.warn('Failed to copy value', err);
+    }
   };
 
   const renderResources = () => {
@@ -122,7 +188,36 @@ const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config }
 
   const renderContent = () => {
     switch (activeTab) {
-      case 'ENV': return renderKeyValue(resource.env || {});
+      case 'ENV': {
+        const envSecrets = displayResource?.envSecrets || [];
+        const hasSecrets = envSecrets.length > 0;
+        return (
+          <div className="mt-2 space-y-2">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-[10px] uppercase tracking-widest font-bold text-slate-400 dark:text-slate-500">
+              <span>Environment Variables</span>
+              {hasSecrets ? (
+                canViewSecrets ? (
+                  <button
+                    onClick={handleToggleSecrets}
+                    className="px-2 py-1 rounded border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white transition-colors"
+                    disabled={secretsLoading}
+                  >
+                    {secretsLoading ? 'Loading...' : showSecrets ? 'Hide Secrets' : 'Show Secrets'}
+                  </button>
+                ) : (
+                  <span className="text-[9px] font-semibold text-slate-400">Secrets hidden</span>
+                )
+              ) : null}
+            </div>
+            {secretsError && (
+              <div className="text-[10px] text-red-500 border border-red-500/30 bg-red-500/10 px-2 py-1 rounded">
+                {secretsError}
+              </div>
+            )}
+            {renderKeyValue(displayResource.env || {}, envSecrets, showSecrets)}
+          </div>
+        );
+      }
       case 'LABELS': return renderKeyValue({ ...(resource.labels || {}), ...(resource.annotations || {}) });
       case 'VOLUMES':
         return (
@@ -167,16 +262,36 @@ const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config }
     }
   };
 
-  const renderKeyValue = (data: Record<string, string> | undefined | null) => {
+  const renderKeyValue = (
+    data: Record<string, string> | undefined | null,
+    secretKeys: string[] = [],
+    revealSecrets: boolean = false
+  ) => {
     const entries = data ? Object.entries(data) : [];
+    const secretSet = new Set(secretKeys);
     return (
       <div className="mt-4 bg-slate-50 dark:bg-slate-900 rounded-xl p-4 mono text-[11px] border border-slate-200 dark:border-slate-700 max-h-[400px] overflow-y-auto custom-scrollbar transition-colors duration-200">
-        {entries.length > 0 ? entries.map(([k, v]) => (
-          <div key={k} className="flex border-b border-slate-200 dark:border-slate-800 last:border-0 py-2">
-            <span className="text-sky-600 dark:text-sky-400 font-bold shrink-0 w-32 truncate" title={k}>{k}:</span>
-            <span className="text-slate-700 dark:text-slate-300 break-all">{v}</span>
-          </div>
-        )) : <div className="text-slate-400 italic">No entries found</div>}
+        {entries.length > 0 ? entries.map(([k, v]) => {
+          const isSecret = secretSet.has(k);
+          const isHidden = isSecret && !revealSecrets;
+          const value = isHidden ? '********' : v;
+          return (
+            <div key={k} className="grid grid-cols-[minmax(140px,240px)_1fr_auto] gap-3 border-b border-slate-200 dark:border-slate-800 last:border-0 py-2 items-start">
+              <span className="text-sky-600 dark:text-sky-400 font-bold break-all" title={k}>{k}:</span>
+              <span className={`text-slate-700 dark:text-slate-300 break-all ${isHidden ? 'italic text-slate-500' : ''}`}>{value}</span>
+              {!isHidden && value !== '' ? (
+                <button
+                  onClick={() => handleCopy(k, value)}
+                  className="text-[10px] px-2 py-1 rounded border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-white transition-colors"
+                >
+                  {copiedKey === k ? 'Copied' : 'Copy'}
+                </button>
+              ) : (
+                <span className="text-[9px] text-slate-400 uppercase tracking-wide">{isSecret ? 'Hidden' : ''}</span>
+              )}
+            </div>
+          );
+        }) : <div className="text-slate-400 italic">No entries found</div>}
       </div>
     );
   };

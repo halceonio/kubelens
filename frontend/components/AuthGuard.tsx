@@ -20,6 +20,7 @@ type AuthConfig = {
   realm: string;
   clientId: string;
   allowedGroups: string[];
+  allowedSecretsGroups?: string[];
 };
 
 const DEFAULT_ALLOWED_GROUPS = ['k8s-logs-access'];
@@ -39,7 +40,8 @@ const loadCachedAuthConfig = (): AuthConfig | null => {
       keycloakUrl: parsed.keycloakUrl,
       realm: parsed.realm,
       clientId: parsed.clientId,
-      allowedGroups: parsed.allowedGroups?.length ? parsed.allowedGroups : DEFAULT_ALLOWED_GROUPS
+      allowedGroups: parsed.allowedGroups?.length ? parsed.allowedGroups : DEFAULT_ALLOWED_GROUPS,
+      allowedSecretsGroups: parsed.allowedSecretsGroups || []
     };
   } catch {
     return null;
@@ -85,22 +87,25 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
     return url.toString();
   };
 
-  const setUserFromToken = (token?: string | null) => {
-    if (token) {
-      localStorage.setItem('kubelens_access_token', token);
-    }
-    const claims = token ? parseJwtClaims(token) : null;
-    const groups = claims?.groups ?? (USE_MOCKS ? ['k8s-logs-access', 'developers'] : []);
-    const authUser: AuthUser = {
-      username: claims?.preferred_username || claims?.email || claims?.sub || (USE_MOCKS ? 'dev_user' : 'unknown'),
-      email: claims?.email || (USE_MOCKS ? 'dev@enterprise.com' : ''),
-      groups,
-      isAuthenticated: Boolean(token) || USE_MOCKS,
-      accessToken: token
-    };
-    setUser(authUser);
-    if (onAuth) onAuth(authUser);
+const setUserFromToken = (token?: string | null, cfg?: AuthConfig | null) => {
+  if (token) {
+    localStorage.setItem('kubelens_access_token', token);
+  }
+  const claims = token ? parseJwtClaims(token) : null;
+  const groups = claims?.groups ?? (USE_MOCKS ? ['k8s-logs-access', 'developers'] : []);
+  const allowedSecretsGroups = cfg?.allowedSecretsGroups || [];
+  const canViewSecrets = allowedSecretsGroups.length > 0 && groups.some((group) => allowedSecretsGroups.includes(group));
+  const authUser: AuthUser = {
+    username: claims?.preferred_username || claims?.email || claims?.sub || (USE_MOCKS ? 'dev_user' : 'unknown'),
+    email: claims?.email || (USE_MOCKS ? 'dev@enterprise.com' : ''),
+    groups,
+    isAuthenticated: Boolean(token) || USE_MOCKS,
+    accessToken: token,
+    canViewSecrets
   };
+  setUser(authUser);
+  if (onAuth) onAuth(authUser);
+};
 
   useEffect(() => {
     const run = async () => {
@@ -133,11 +138,15 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
               const allowedGroups = Array.isArray(data?.allowed_groups)
                 ? data.allowed_groups.filter((group: string) => typeof group === 'string' && group.length > 0)
                 : [];
+              const allowedSecretsGroups = Array.isArray(data?.allowed_secrets_groups)
+                ? data.allowed_secrets_groups.filter((group: string) => typeof group === 'string' && group.length > 0)
+                : [];
               const config: AuthConfig = {
                 keycloakUrl,
                 realm,
                 clientId,
-                allowedGroups: allowedGroups.length ? allowedGroups : DEFAULT_ALLOWED_GROUPS
+                allowedGroups: allowedGroups.length ? allowedGroups : DEFAULT_ALLOWED_GROUPS,
+                allowedSecretsGroups
               };
               saveCachedAuthConfig(config);
               return config;
@@ -157,7 +166,8 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
             keycloakUrl: envKeycloakUrl,
             realm: envRealm,
             clientId: envClientId,
-            allowedGroups: DEFAULT_ALLOWED_GROUPS
+            allowedGroups: DEFAULT_ALLOWED_GROUPS,
+            allowedSecretsGroups: []
           };
         }
 
@@ -200,7 +210,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
           }
           sessionStorage.removeItem('kubelens_oauth_state');
           window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
-          setUserFromToken(token);
+          setUserFromToken(token, cfg);
           setLoading(false);
           return;
         } catch (err) {
@@ -213,7 +223,7 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
 
       const token = (import.meta as any).env?.VITE_KUBELENS_TOKEN || localStorage.getItem('kubelens_access_token');
       if (token || USE_MOCKS) {
-        setUserFromToken(token);
+        setUserFromToken(token, cfg);
         setLoading(false);
         return;
       }

@@ -17,6 +17,12 @@ const fetchJSON = async <T>(url: string, token?: string | null): Promise<T> => {
   return res.json();
 };
 
+const withRevealSecrets = (url: string, reveal?: boolean) => {
+  if (!reveal) return url;
+  const joiner = url.includes('?') ? '&' : '?';
+  return `${url}${joiner}reveal_secrets=true`;
+};
+
 const generateMockLog = (podName: string, containerName: string, minutesOffset: number = 0): LogEntry => {
   const levels: LogLevel[] = ['INFO', 'INFO', 'INFO', 'WARNING', 'ERROR'];
   const messages = [
@@ -98,6 +104,7 @@ export const getPods = async (namespace: string, token?: string | null): Promise
           'MAX_RETRIES': '5',
           'NODE_NAME': 'worker-node-04'
         },
+        envSecrets: ['API_KEY'],
         resources: {
           cpuUsage: (Math.random() * 200).toFixed(0) + 'm',
           cpuRequest: '100m',
@@ -112,10 +119,16 @@ export const getPods = async (namespace: string, token?: string | null): Promise
   });
 };
 
-export const getPodByName = async (namespace: string, name: string, token?: string | null): Promise<Pod | null> => {
+export const getPodByName = async (
+  namespace: string,
+  name: string,
+  token?: string | null,
+  opts?: { revealSecrets?: boolean }
+): Promise<Pod | null> => {
   if (token) {
     try {
-      return await fetchJSON<Pod>(`${API_BASE}/namespaces/${namespace}/pods/${name}`, token);
+      const url = withRevealSecrets(`${API_BASE}/namespaces/${namespace}/pods/${name}`, opts?.revealSecrets);
+      return await fetchJSON<Pod>(url, token);
     } catch (err) {
       console.warn('Failed to load pod from backend', err);
     }
@@ -164,6 +177,7 @@ export const getApps = async (namespace: string, token?: string | null): Promise
           },
           annotations: { 'deployment.kubernetes.io/revision': '5' },
           env: { 'LOG_LEVEL': 'DEBUG', 'NODE_ENV': 'production' },
+          envSecrets: [],
           volumes: [{ name: 'api-storage', mountPath: '/data', readOnly: false }],
           secrets: ['api-key-secret'],
           configMaps: ['api-config'],
@@ -196,6 +210,7 @@ export const getApps = async (namespace: string, token?: string | null): Promise
           },
           annotations: { 'statefulset.kubernetes.io/pod-name': `${namespace}-db-0` },
           env: { 'DB_PASSWORD': '********', 'DB_USER': 'admin' },
+          envSecrets: ['DB_PASSWORD'],
           volumes: [{ name: 'db-data', mountPath: '/var/lib/mysql', readOnly: false }],
           secrets: ['db-root-password'],
           configMaps: ['db-tuning-params'],
@@ -218,10 +233,16 @@ export const getApps = async (namespace: string, token?: string | null): Promise
   });
 };
 
-export const getAppByName = async (namespace: string, name: string, token?: string | null): Promise<AppResource | null> => {
+export const getAppByName = async (
+  namespace: string,
+  name: string,
+  token?: string | null,
+  opts?: { revealSecrets?: boolean }
+): Promise<AppResource | null> => {
   if (token) {
     try {
-      return await fetchJSON<AppResource>(`${API_BASE}/namespaces/${namespace}/apps/${name}`, token);
+      const url = withRevealSecrets(`${API_BASE}/namespaces/${namespace}/apps/${name}`, opts?.revealSecrets);
+      return await fetchJSON<AppResource>(url, token);
     } catch (err) {
       console.warn('Failed to load app from backend', err);
     }

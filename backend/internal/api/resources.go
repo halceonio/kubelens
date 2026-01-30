@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
+	"strings"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
@@ -54,6 +55,7 @@ type podResponse struct {
 	Labels      map[string]string     `json:"labels"`
 	Annotations map[string]string     `json:"annotations"`
 	Env         map[string]string     `json:"env"`
+	EnvSecrets  []string              `json:"envSecrets"`
 	Containers  []containerResponse   `json:"containers"`
 	Volumes     []volumeMountResponse `json:"volumes"`
 	Secrets     []string              `json:"secrets"`
@@ -72,6 +74,7 @@ type appResponse struct {
 	Labels        map[string]string     `json:"labels"`
 	Annotations   map[string]string     `json:"annotations"`
 	Env           map[string]string     `json:"env"`
+	EnvSecrets    []string              `json:"envSecrets"`
 	Resources     resourceUsage         `json:"resources"`
 	Volumes       []volumeMountResponse `json:"volumes"`
 	Secrets       []string              `json:"secrets"`
@@ -202,7 +205,7 @@ func (h *KubeHandler) handlePodsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowPod(&pod) {
 			continue
 		}
-		resp = append(resp, h.mapPod(&pod, false, nil))
+		resp = append(resp, h.mapPod(&pod, false, nil, false))
 	}
 	writeJSON(w, resp)
 }
@@ -221,7 +224,11 @@ func (h *KubeHandler) handlePodGet(w http.ResponseWriter, r *http.Request, names
 		writeError(w, http.StatusForbidden, "pod not allowed")
 		return
 	}
-	writeJSON(w, h.mapPod(pod, false, nil))
+	var user *auth.User
+	if u, ok := auth.UserFromContext(r.Context()); ok {
+		user = u
+	}
+	writeJSON(w, h.mapPod(pod, false, user, wantsRevealSecrets(r)))
 }
 
 func (h *KubeHandler) handlePodDetails(w http.ResponseWriter, r *http.Request, namespace, name string) {
@@ -243,7 +250,7 @@ func (h *KubeHandler) handlePodDetails(w http.ResponseWriter, r *http.Request, n
 	if u, ok := auth.UserFromContext(r.Context()); ok {
 		user = u
 	}
-	writeJSON(w, h.mapPod(pod, true, user))
+	writeJSON(w, h.mapPod(pod, true, user, wantsRevealSecrets(r)))
 }
 
 func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, namespace string) {
@@ -263,7 +270,7 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(dep.Name, dep.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapDeployment(ctx, &dep))
+		resp = append(resp, h.mapDeployment(ctx, &dep, nil, false))
 	}
 
 	statefulSets, err := h.client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
@@ -278,7 +285,7 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(sts.Name, sts.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapStatefulSet(ctx, &sts))
+		resp = append(resp, h.mapStatefulSet(ctx, &sts, nil, false))
 	}
 
 	cnpgClusters, err := h.listCnpgClusters(ctx, namespace)
@@ -302,7 +309,7 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		if !h.allowApp(dragonfly.Metadata.Name, dragonfly.Metadata.Labels) {
 			continue
 		}
-		resp = append(resp, h.mapDragonfly(ctx, &dragonfly))
+		resp = append(resp, h.mapDragonfly(ctx, &dragonfly, nil, false))
 	}
 
 	writeJSON(w, resp)
@@ -314,13 +321,18 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 		return
 	}
 	ctx := r.Context()
+	var user *auth.User
+	if u, ok := auth.UserFromContext(r.Context()); ok {
+		user = u
+	}
+	reveal := wantsRevealSecrets(r)
 	dep, err := h.client.AppsV1().Deployments(namespace).Get(ctx, name, metav1.GetOptions{})
 	if err == nil {
 		if !h.allowApp(dep.Name, dep.Labels) {
 			writeError(w, http.StatusForbidden, "app not allowed")
 			return
 		}
-		writeJSON(w, h.mapDeployment(ctx, dep))
+		writeJSON(w, h.mapDeployment(ctx, dep, user, reveal))
 		return
 	}
 	sts, err := h.client.AppsV1().StatefulSets(namespace).Get(ctx, name, metav1.GetOptions{})
@@ -333,7 +345,7 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 			writeError(w, http.StatusForbidden, "app not allowed")
 			return
 		}
-		writeJSON(w, h.mapStatefulSet(ctx, sts))
+		writeJSON(w, h.mapStatefulSet(ctx, sts, user, reveal))
 		return
 	}
 	cluster, err := h.getCnpgCluster(ctx, namespace, name)
@@ -356,7 +368,7 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 			writeError(w, http.StatusForbidden, "app not allowed")
 			return
 		}
-		writeJSON(w, h.mapDragonfly(ctx, dragonfly))
+		writeJSON(w, h.mapDragonfly(ctx, dragonfly, user, reveal))
 		return
 	}
 	if err != nil && !apierrors.IsNotFound(err) {
@@ -416,7 +428,7 @@ func (h *KubeHandler) allowApp(name string, labels map[string]string) bool {
 	return true
 }
 
-func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.User) podResponse {
+func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.User, revealSecrets bool) podResponse {
 	restarts := int32(0)
 	containers := make([]containerResponse, 0, len(pod.Status.ContainerStatuses))
 	for _, status := range pod.Status.ContainerStatuses {
@@ -443,8 +455,9 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 	}
 
 	env := map[string]string{}
+	envSecrets := []string{}
 	if len(pod.Spec.Containers) > 0 {
-		env = extractEnv(pod.Namespace, pod.Spec.Containers[0].Env, pod.Spec.Containers[0].EnvFrom, user, h.client)
+		env, envSecrets = extractEnv(pod.Namespace, pod.Spec.Containers[0].Env, pod.Spec.Containers[0].EnvFrom, user, revealSecrets, h.client)
 	}
 
 	return podResponse{
@@ -456,6 +469,7 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 		Labels:      pod.Labels,
 		Annotations: pod.Annotations,
 		Env:         env,
+		EnvSecrets:  envSecrets,
 		Containers:  containers,
 		Volumes:     volumes,
 		Secrets:     secrets,
@@ -465,7 +479,7 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 	}
 }
 
-func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment) appResponse {
+func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment, user *auth.User, revealSecrets bool) appResponse {
 	pods := h.listPodsForSelector(ctx, dep.Namespace, dep.Spec.Selector)
 	requests, limits := sumResourceRequests(dep.Spec.Template.Spec.Containers)
 	volumes := extractVolumeMounts(dep.Spec.Template.Spec.Containers)
@@ -475,6 +489,7 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment)
 	if len(dep.Spec.Template.Spec.Containers) > 0 {
 		image = dep.Spec.Template.Spec.Containers[0].Image
 	}
+	env, envSecrets := extractEnv(dep.Namespace, firstEnv(dep.Spec.Template.Spec.Containers), firstEnvFrom(dep.Spec.Template.Spec.Containers), user, revealSecrets, h.client)
 
 	return appResponse{
 		Name:          dep.Name,
@@ -485,7 +500,8 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment)
 		PodNames:      pods,
 		Labels:        dep.Labels,
 		Annotations:   dep.Annotations,
-		Env:           extractEnv(dep.Namespace, firstEnv(dep.Spec.Template.Spec.Containers), firstEnvFrom(dep.Spec.Template.Spec.Containers), nil, h.client),
+		Env:           env,
+		EnvSecrets:    envSecrets,
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -502,7 +518,7 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment)
 	}
 }
 
-func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSet) appResponse {
+func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSet, user *auth.User, revealSecrets bool) appResponse {
 	pods := h.listPodsForSelector(ctx, sts.Namespace, sts.Spec.Selector)
 	requests, limits := sumResourceRequests(sts.Spec.Template.Spec.Containers)
 	volumes := extractVolumeMounts(sts.Spec.Template.Spec.Containers)
@@ -512,6 +528,7 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 	if len(sts.Spec.Template.Spec.Containers) > 0 {
 		image = sts.Spec.Template.Spec.Containers[0].Image
 	}
+	env, envSecrets := extractEnv(sts.Namespace, firstEnv(sts.Spec.Template.Spec.Containers), firstEnvFrom(sts.Spec.Template.Spec.Containers), user, revealSecrets, h.client)
 
 	return appResponse{
 		Name:          sts.Name,
@@ -522,7 +539,8 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 		PodNames:      pods,
 		Labels:        sts.Labels,
 		Annotations:   sts.Annotations,
-		Env:           extractEnv(sts.Namespace, firstEnv(sts.Spec.Template.Spec.Containers), firstEnvFrom(sts.Spec.Template.Spec.Containers), nil, h.client),
+		Env:           env,
+		EnvSecrets:    envSecrets,
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -557,6 +575,7 @@ func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster) 
 		Labels:        cluster.Metadata.Labels,
 		Annotations:   cluster.Metadata.Annotations,
 		Env:           map[string]string{},
+		EnvSecrets:    []string{},
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -572,10 +591,11 @@ func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster) 
 	}
 }
 
-func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource) appResponse {
+func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource, user *auth.User, revealSecrets bool) appResponse {
 	pods, ready := h.listPodsForLabel(ctx, dragonfly.Metadata.Namespace, fmt.Sprintf("%s=%s", dragonflyAppLabelKey, dragonfly.Metadata.Name))
 	requests, limits := sumResourceRequirements(dragonfly.Spec.Resources)
 	secretRefs, configRefs := extractEnvRefs(dragonfly.Spec.Env)
+	env, envSecrets := extractEnv(dragonfly.Metadata.Namespace, dragonfly.Spec.Env, nil, user, revealSecrets, h.client)
 
 	return appResponse{
 		Name:          dragonfly.Metadata.Name,
@@ -586,7 +606,8 @@ func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyReso
 		PodNames:      pods,
 		Labels:        dragonfly.Metadata.Labels,
 		Annotations:   dragonfly.Metadata.Annotations,
-		Env:           extractEnv(dragonfly.Metadata.Namespace, dragonfly.Spec.Env, nil, nil, h.client),
+		Env:           env,
+		EnvSecrets:    envSecrets,
 		Resources: resourceUsage{
 			CPUUsage:   "0",
 			MemUsage:   "0",
@@ -858,8 +879,15 @@ func firstEnvFrom(containers []corev1.Container) []corev1.EnvFromSource {
 	return containers[0].EnvFrom
 }
 
-func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFromSource, user *auth.User, client *kubernetes.Clientset) map[string]string {
+func wantsRevealSecrets(r *http.Request) bool {
+	val := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("reveal_secrets")))
+	return val == "true" || val == "1" || val == "yes"
+}
+
+func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFromSource, user *auth.User, revealSecrets bool, client *kubernetes.Clientset) (map[string]string, []string) {
 	result := map[string]string{}
+	secretKeys := map[string]struct{}{}
+	canReveal := revealSecrets && user != nil && user.AllowedSecrets && client != nil
 
 	if client != nil {
 		for _, source := range envFrom {
@@ -888,11 +916,12 @@ func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFrom
 						if key == "" {
 							continue
 						}
-						if user != nil && user.AllowedSecrets {
+						secretKeys[key] = struct{}{}
+						if canReveal {
 							result[key] = string(value)
-						} else {
-							result[key] = "********"
+							continue
 						}
+						result[key] = "********"
 					}
 				}
 			}
@@ -908,7 +937,8 @@ func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFrom
 			continue
 		}
 		if env.ValueFrom.SecretKeyRef != nil {
-			if user != nil && user.AllowedSecrets && client != nil {
+			secretKeys[env.Name] = struct{}{}
+			if canReveal {
 				value, err := fetchSecretValue(client, namespace, env.ValueFrom.SecretKeyRef.Name, env.ValueFrom.SecretKeyRef.Key)
 				if err == nil {
 					result[env.Name] = value
@@ -929,7 +959,7 @@ func extractEnv(namespace string, envs []corev1.EnvVar, envFrom []corev1.EnvFrom
 			result[env.Name] = "********"
 		}
 	}
-	return result
+	return result, mapKeys(secretKeys)
 }
 
 func fetchSecretData(client *kubernetes.Clientset, namespace, name string) (map[string][]byte, error) {
