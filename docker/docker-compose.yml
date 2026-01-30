@@ -11,6 +11,10 @@ services:
     environment:
       KUBELENS_CONFIG: /etc/kubelens/config.yaml
       KUBECONFIG: /etc/kubeconfig
+      # Optional: run a local Valkey inside the container
+      # START_LOCAL_VALKEY: "true"
+      # LOCAL_VALKEY_DATA_DIR: "/data/cache"
+      # LOCAL_VALKEY_MAXMEMORY: "512mb"
     volumes:
       - ./config.yaml:/etc/kubelens/config.yaml:ro
       - ./kubeconfig:/etc/kubeconfig:ro
