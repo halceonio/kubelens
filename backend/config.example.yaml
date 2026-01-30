@@ -5,8 +5,8 @@ server:
   idle_timeout_seconds: 60
 
 auth:
-  keycloak_url: "https://keycloak.halceon.io"
-  realm: "platforms"
+  keycloak_url: "https://keycloak.enterprise.com"
+  realm: "monitoring"
   client_id: "kubelens"
   client_secret: "9NIzSlYlsPIMfHCnH82ObwvBeRnKqy7g"
   allowed_groups:
@@ -30,7 +30,7 @@ cache:
   redis_url: ""
 
 kubernetes:
-  cluster_name: "srv-cluster-east"
+  cluster_name: "enterprise-cluster"
   terminated_log_ttl: 3600
   api:
     burst: 200
@@ -42,10 +42,10 @@ kubernetes:
   app_groups:
     enabled: true
     labels:
-      selector: "app.logging.k8s.io/group"
-      name: "app.logging.k8s.io/name"
-      environment: "app.logging.k8s.io/environment"
-      version: "app.logging.k8s.io/version"
+      selector: "app.enterprise.com/group"
+      name: "app.enterprise.com/name"
+      environment: "app.enterprise.com/environment"
+      version: "app.enterprise.com/version"
   pod_filters:
     include_regex: ".*"
     exclude_labels:
@@ -56,4 +56,4 @@ kubernetes:
     exclude_labels:
       - "component=istio"
       - "heritage=Helm"
-  label_prefix: "logger.app.k8s.io"
+  label_prefix: "logger.app.enterprise.com"
