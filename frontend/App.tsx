@@ -25,6 +25,7 @@ const App: React.FC = () => {
   const [inspectingResource, setInspectingResource] = useState<Pod | AppResource | null>(null);
   const [isRestoring, setIsRestoring] = useState(true);
   const [sessionToken, setSessionToken] = useState<string | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [remoteSession, setRemoteSession] = useState<SessionPayload | null>(null);
   const [sessionReady, setSessionReady] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
@@ -43,6 +44,7 @@ const App: React.FC = () => {
 
   const handleAuth = useCallback((user: AuthUser) => {
     setSessionToken(user.accessToken ?? null);
+    setAuthUser(user);
   }, []);
 
   useEffect(() => {
@@ -384,8 +386,12 @@ const App: React.FC = () => {
 
               <div className="flex items-center gap-3">
                 <div className="hidden sm:block text-right">
-                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300 leading-none mb-0.5">dev_user</p>
-                  <p className="text-[9px] text-sky-600 dark:text-sky-500 font-bold uppercase tracking-tight leading-none">k8s-logs-access</p>
+                  <p className="text-xs font-bold text-slate-700 dark:text-slate-300 leading-none mb-0.5">
+                    {authUser?.username || authUser?.email || 'dev_user'}
+                  </p>
+                  <p className="text-[9px] text-sky-600 dark:text-sky-500 font-bold uppercase tracking-tight leading-none">
+                    {authUser?.groups?.[0] || 'k8s-logs-access'}
+                  </p>
                 </div>
                 <div className="w-8 h-8 rounded-full bg-slate-100 dark:bg-slate-700 flex items-center justify-center text-sky-500 dark:text-sky-400 border border-slate-200 dark:border-slate-600 shadow-sm">
                   <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" strokeWidth={2} /></svg>

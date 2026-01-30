@@ -130,6 +130,23 @@ const Sidebar: React.FC<SidebarProps> = ({
     }
   };
 
+  const getAppDisplayName = (app: AppResource) => {
+    const labelKey = MOCK_CONFIG.appGroups.labels.name;
+    return (
+      app.labels?.[labelKey] ||
+      app.labels?.['app.kubernetes.io/name'] ||
+      app.labels?.['app.sgz.ai/name'] ||
+      app.name
+    );
+  };
+
+  const appMatchesSearch = (app: AppResource) => {
+    const query = search.toLowerCase();
+    if (!query) return true;
+    const displayName = getAppDisplayName(app).toLowerCase();
+    return displayName.includes(query) || app.name.toLowerCase().includes(query);
+  };
+
   const getAppMetadata = (app: AppResource) => {
     const { environment, version } = MOCK_CONFIG.appGroups.labels;
     const env = app.labels?.[environment];
@@ -270,8 +287,9 @@ const Sidebar: React.FC<SidebarProps> = ({
 
                   {expandedGroup === group && (
                     <div className="pl-8 pr-3 mt-1 space-y-0.5">
-                      {appGroupsMap[group].filter(a => a.name.toLowerCase().includes(search.toLowerCase())).map((app) => {
+                      {appGroupsMap[group].filter(appMatchesSearch).map((app) => {
                         const { env, ver } = getAppMetadata(app);
+                        const displayName = getAppDisplayName(app);
                         return (
                           <div key={`${app.namespace}-${app.name}`} className="group relative">
                             <button
@@ -287,7 +305,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             >
                               <span className={`w-2 h-2 rounded shrink-0 ${app.readyReplicas === app.replicas ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                               <div className="flex flex-col items-start leading-tight overflow-hidden text-left">
-                                <span className="truncate font-medium w-full">{app.name}</span>
+                                <span className="truncate font-medium w-full">{displayName}</span>
                                 <div className="flex gap-1 mt-0.5 flex-wrap">
                                   {env && (
                                     <span className="text-[7px] font-bold px-1 bg-sky-500/10 text-sky-500 border border-sky-500/20 rounded uppercase leading-none py-0.5">
@@ -368,7 +386,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                           </div>
                         ))
                       ) : (
-                        apps[ns.name]?.filter(a => a.name.toLowerCase().includes(search.toLowerCase())).map((app) => (
+                        apps[ns.name]?.filter(appMatchesSearch).map((app) => (
                           <div key={app.name} className="group relative">
                             <button
                               onClick={() => {
@@ -383,7 +401,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                             >
                               <span className={`w-2 h-2 rounded shrink-0 ${app.readyReplicas === app.replicas ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
                               <div className="flex flex-col items-start leading-tight overflow-hidden text-left">
-                                <span className="truncate font-medium w-full">{app.name}</span>
+                                <span className="truncate font-medium w-full">{getAppDisplayName(app)}</span>
                                 <span className="text-[8px] text-slate-400 dark:text-slate-500 uppercase">{app.type} ({app.readyReplicas}/{app.replicas})</span>
                               </div>
                             </button>

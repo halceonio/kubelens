@@ -15,16 +15,16 @@ export const MOCK_CONFIG = {
   keycloakUrl: 'https://sso.enterprise.com',
   realm: 'production',
   clientId: 'kubelens-client',
-  allowedNamespaces: ['default', 'payment-svc', 'inventory-svc', 'auth-svc'],
+  allowedNamespaces: ['ai-system', 'apps', 'api', 'db', 'internal-apps'],
   podFilterRegex: '.*',
-  label_prefix: 'logger.app.k8s.io',
+  label_prefix: 'app.sgz.ai',
   appGroups: {
     enabled: true,
     labels: {
-      selector: "app.logging.k8s.io/group",
-      name: "app.logging.k8s.io/name",
-      environment: "app.logging.k8s.io/environment",
-      version: "app.logging.k8s.io/version"
+      selector: "app.sgz.ai/group",
+      name: "app.sgz.ai/displayname",
+      environment: "app.sgz.ai/env",
+      version: "app.sgz.ai/version"
     }
   }
 };
