@@ -297,6 +297,8 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   const isMarker = log.kind === 'marker';
   const isActiveMatch = activeMatchIndex === index;
 
+  const displayMessage = isMarker && !showDetails ? `${log.podName}: ${log.message}` : log.message;
+
   return (
     <div 
       style={rowStyle} 
@@ -336,7 +338,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
       )}
       
       <span className={`pt-0.5 ${isWrapping ? 'whitespace-normal break-all' : 'whitespace-nowrap'} ${isMarker ? 'text-sky-300 italic' : isTerminated ? 'text-slate-500 italic' : 'text-slate-300'}`}>
-        {renderAnsiWithHighlight(log.message, searchQuery)}
+        {renderAnsiWithHighlight(displayMessage, searchQuery)}
       </span>
     </div>
   );
