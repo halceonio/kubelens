@@ -13,7 +13,7 @@ KubeLens runs as a single pod (frontend + backend + nginx) and exposes a single 
 2) SPA redirects to Keycloak for auth if needed.
 3) Backend validates JWTs and applies namespace/label filters.
 4) Kubernetes resources are cached via shared informers and short‑TTL snapshots to reduce API load.
-5) Logs stream via SSE from the backend to the frontend.
+5) Logs stream via SSE from the backend to the frontend. Log workers are pooled per pod/container and can optionally use Redis Streams to share a single upstream stream across backend replicas.
 6) User preferences persist via the backend session store.
 
 ## Auth config handshake
@@ -25,3 +25,7 @@ endpoint is unavailable.
 ## Config hot reload
 When the backend is configured via a mounted ConfigMap, it watches the config
 file for changes and reloads the runtime configuration without a restart.
+
+## Observability
+- Cache activity metrics are exposed at `GET /api/v1/metrics`.
+- Backend logs are structured and colored using Charmbracelet `log`.

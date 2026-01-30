@@ -36,6 +36,7 @@ logs:
   redis_url: "" # optional override; defaults to cache.redis_url
 ```
 When enabled, each pod/container log stream is handled by a single leader that writes to Redis, while other replicas read and fan out to their subscribers. This reduces upstream Kubernetes log streams and improves team-scale usage.
+The in-process log worker also maintains a ring buffer (default 10k lines) to support fast replay for reconnecting clients.
 
 ## API cache modes
 The API cache supports an optional metadata-only list mode to reduce API server load:

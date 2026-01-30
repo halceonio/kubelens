@@ -9,6 +9,7 @@ Many enterprise teams need quick insight into application behavior but should no
 
 ## Key features
 - Multi-pane log dashboard (up to 4 concurrent streams) with SSE streaming
+- Shared log workers with optional Redis Streams for multi-replica fan-out
 - Virtualized log rendering for high-volume streams
 - Log level filtering, regex search, auto-scroll, and line wrapping
 - Pod inspector for env/config/secrets (masked) and resource limits/usage
@@ -148,6 +149,7 @@ kubernetes:
 ## Logging
 - Backend logs are structured and colorized using Charmbracelet `log`.
 - Nginx access logs for `/healthz` and `/readyz` are disabled to reduce noise in container output.
+- Log worker pooling events are visible in backend logs when Redis Streams is enabled.
 
 ## Documentation
 - `docs/index.md` entry point
