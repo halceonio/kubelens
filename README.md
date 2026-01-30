@@ -66,6 +66,15 @@ http://localhost:8080
 
 The compose file expects `docker/config.yaml` and `docker/kubeconfig` to be mounted. You can override with `KUBELENS_CONFIG` and `KUBECONFIG`.
 
+### Local Valkey (optional)
+To run a local Redis-compatible cache inside the container:
+```bash
+START_LOCAL_VALKEY=true
+LOCAL_VALKEY_DATA_DIR=/data/cache
+LOCAL_VALKEY_MAXMEMORY=512mb
+```
+If `LOCAL_VALKEY_MAXMEMORY` is omitted, the container auto-tunes Valkey maxmemory to ~70% of the detected memory limit.
+
 ## Backend integration
 The backend acts as a secure proxy to the Kubernetes API and enforces namespace allowlists and label filters. The full reference spec and configuration schema are in `refs/backend_ref.md`.
 

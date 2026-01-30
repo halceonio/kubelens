@@ -22,6 +22,15 @@ logs:
 ```
 This controls how often app log streams re-check pod membership to pick up new replicas or rolling updates.
 
+## Local cache in the container
+When using the single-container image, you can optionally start a local Valkey instance with:
+```
+START_LOCAL_VALKEY=true
+LOCAL_VALKEY_DATA_DIR=/data/cache
+LOCAL_VALKEY_MAXMEMORY=512mb
+```
+If no `LOCAL_VALKEY_MAXMEMORY` is provided, Valkey auto-tunes maxmemory to ~70% of the container’s memory limit when available.
+
 ## Example
 ```yaml
 auth:

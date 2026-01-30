@@ -15,6 +15,7 @@ log() {
 CONFIG_PATH="${KUBELENS_CONFIG:-/etc/kubelens/config.yaml}"
 RUNTIME_CONFIG="${KUBELENS_RUNTIME_CONFIG:-/var/lib/kubelens/config.runtime.yaml}"
 SUPERVISOR_DIR="/etc/supervisord.d"
+VALKEY_RUNTIME_CONFIG="/var/lib/kubelens/valkey.conf"
 
 ensure_writable_config() {
   if [ -f "$CONFIG_PATH" ] && [ ! -w "$CONFIG_PATH" ]; then
@@ -87,6 +88,33 @@ maybe_enable_local_cache() {
   mkdir -p "$data_dir"
   chmod 777 "$data_dir" || true
 
+  local_maxmemory="${LOCAL_VALKEY_MAXMEMORY:-${LOCAL_REDIS_MAXMEMORY:-}}"
+  if [ -z "$local_maxmemory" ]; then
+    mem_limit=""
+    if [ -f /sys/fs/cgroup/memory.max ]; then
+      mem_limit="$(cat /sys/fs/cgroup/memory.max 2>/dev/null || true)"
+      if [ "$mem_limit" = "max" ]; then
+        mem_limit=""
+      fi
+    elif [ -f /sys/fs/cgroup/memory/memory.limit_in_bytes ]; then
+      mem_limit="$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes 2>/dev/null || true)"
+      if [ -n "$mem_limit" ] && [ "$mem_limit" -ge 9000000000000000000 ]; then
+        mem_limit=""
+      fi
+    fi
+
+    if [ -n "$mem_limit" ]; then
+      local_maxmemory=$((mem_limit * 70 / 100))
+    fi
+  fi
+
+  if [ -f /etc/valkey/valkey.conf ]; then
+    cp /etc/valkey/valkey.conf "$VALKEY_RUNTIME_CONFIG"
+    if [ -n "$local_maxmemory" ]; then
+      echo "maxmemory $local_maxmemory" >> "$VALKEY_RUNTIME_CONFIG"
+    fi
+  fi
+
   ensure_writable_config
   if [ -f "$CONFIG_PATH" ]; then
     cat >> "$CONFIG_PATH" <<EOF
@@ -100,7 +128,7 @@ EOF
   mkdir -p "$SUPERVISOR_DIR"
   cat > "$SUPERVISOR_DIR/valkey.conf" <<EOF
 [program:valkey]
-command=/usr/bin/valkey-server /etc/valkey/valkey.conf --dir $data_dir
+command=/usr/bin/valkey-server ${VALKEY_RUNTIME_CONFIG:-/etc/valkey/valkey.conf} --dir $data_dir
 autostart=true
 autorestart=true
 startretries=3
@@ -110,7 +138,11 @@ stderr_logfile=/dev/fd/2
 stderr_logfile_maxbytes=0
 EOF
 
-  log "local valkey enabled (dir=$data_dir)"
+  if [ -n "$local_maxmemory" ]; then
+    log "local valkey enabled (dir=$data_dir, maxmemory=$local_maxmemory)"
+  else
+    log "local valkey enabled (dir=$data_dir, maxmemory=unset)"
+  fi
 }
 
 if [ -f "$CONFIG_PATH" ]; then
