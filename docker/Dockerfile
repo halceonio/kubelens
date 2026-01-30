@@ -15,7 +15,11 @@ COPY frontend ./
 RUN npm run build
 
 FROM nginx:1.25-alpine
-RUN apk add --no-cache supervisor valkey sqlite
+RUN apk add --no-cache supervisor sqlite \
+  && apk add --no-cache \
+    --repository=http://dl-cdn.alpinelinux.org/alpine/edge/main \
+    --repository=http://dl-cdn.alpinelinux.org/alpine/edge/community \
+    valkey
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/supervisord.conf /etc/supervisord.conf
 COPY docker/valkey.conf /etc/valkey/valkey.conf
