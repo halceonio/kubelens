@@ -55,3 +55,4 @@ refs/kubelens-test.kubeconfig
 site/
 docs/_site/
 docs/.jekyll-cache/
+backend/config.test.yaml

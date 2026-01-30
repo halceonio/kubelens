@@ -11,8 +11,8 @@ KubeLens uses a YAML config file for backend behavior. See `backend/config.examp
 ## Example
 ```yaml
 auth:
-  keycloak_url: "https://keycloak.halceon.io"
-  realm: "platforms"
+  keycloak_url: "https://keycloak.enterprise.com"
+  realm: "monitoring"
   client_id: "kubelens"
   client_secret: "REDACTED"
   allowed_groups:
@@ -28,16 +28,16 @@ cache:
   redis_url: "redis://localhost:6379/0"
 
 kubernetes:
-  cluster_name: "halceon"
+  cluster_name: "enterprise-cluster"
   allowed_namespaces:
     - "apps"
     - "db"
   app_groups:
     enabled: true
     labels:
-      selector: "app.sgz.ai/name"
-      name: "app.sgz.ai/displayname"
-      environment: "app.sgz.ai/env"
-      version: "app.sgz.ai/version"
+      selector: "app.enterprise.com/name"
+      name: "app.enterprise.com/displayname"
+      environment: "app.enterprise.com/env"
+      version: "app.enterprise.com/version"
 ```
 

@@ -5,7 +5,7 @@
 2) Set **Source** to **GitHub Actions**.
 3) Save. GitHub will publish the site at:
 ```
-https://<org>.github.io/<repo>/
+https://halceonio.github.io/kubelens/
 ```
 
 ## Local preview (optional)
