@@ -7,6 +7,9 @@ Usage:
   KEYCLOAK_URL=... REALM=... CLIENT_ID=... CLIENT_SECRET=... \
     $0 [--json]
 
+Optional:
+  SCOPE="openid" (default)
+
 Notes:
 - Requires "OAuth 2.0 Device Authorization Grant" enabled for the client.
 - Prints a verification URL + user code, then polls until token is issued.
@@ -26,13 +29,16 @@ fi
 : "${CLIENT_ID:?CLIENT_ID is required}"
 : "${CLIENT_SECRET:?CLIENT_SECRET is required}"
 
+SCOPE="${SCOPE:-openid}"
+
 DEVICE_ENDPOINT="${KEYCLOAK_URL%/}/realms/${REALM}/protocol/openid-connect/auth/device"
 TOKEN_ENDPOINT="${KEYCLOAK_URL%/}/realms/${REALM}/protocol/openid-connect/token"
 
 init_response=$(curl -sS -X POST "$DEVICE_ENDPOINT" \
   -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "client_id=${CLIENT_ID}" \
-  --data-urlencode "client_secret=${CLIENT_SECRET}")
+  --data-urlencode "client_secret=${CLIENT_SECRET}" \
+  --data-urlencode "scope=${SCOPE}")
 
 KC_RESPONSE="$init_response" python3 - <<'PY'
 import json
@@ -55,6 +61,7 @@ device_code = data.get("device_code")
 user_code = data.get("user_code")
 verification_uri = data.get("verification_uri") or data.get("verification_uri_complete")
 interval = data.get("interval", 5)
+expires_in = data.get("expires_in", 600)
 
 if not device_code or not user_code or not verification_uri:
     print("Missing device_code/user_code/verification_uri in response", file=sys.stderr)
@@ -65,12 +72,14 @@ print(device_code)
 print(user_code)
 print(verification_uri)
 print(interval)
+print(expires_in)
 PY
 
 read -r DEVICE_CODE
 read -r USER_CODE
 read -r VERIFY_URI
 read -r INTERVAL
+read -r EXPIRES_IN
 
 cat <<EOF_INFO
 
@@ -79,10 +88,18 @@ Open the following URL and enter the code:
 Code:
   ${USER_CODE}
 
-Polling for token...
+Polling for token (expires in ${EXPIRES_IN}s)...
 EOF_INFO
 
+start=$(date +%s)
 while true; do
+  now=$(date +%s)
+  elapsed=$((now - start))
+  if [[ $elapsed -ge $EXPIRES_IN ]]; then
+    echo "Device code expired. Please run the script again." >&2
+    exit 1
+  fi
+
   resp=$(curl -sS -X POST "$TOKEN_ENDPOINT" \
     -H "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "grant_type=urn:ietf:params:oauth:grant-type:device_code" \
@@ -105,6 +122,7 @@ except json.JSONDecodeError:
 if "error" in data:
     err = data.get("error")
     if err in ("authorization_pending", "slow_down"):
+        print(err, file=sys.stderr)
         sys.exit(2)
     print(data.get("error_description") or err, file=sys.stderr)
     sys.exit(1)
@@ -125,6 +143,7 @@ PY
   if [[ $status -eq 0 ]]; then
     exit 0
   elif [[ $status -eq 2 ]]; then
+    echo -n "." >&2
     sleep "$INTERVAL"
   else
     exit 1
