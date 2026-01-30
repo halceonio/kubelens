@@ -62,6 +62,7 @@ type KubernetesConfig struct {
 	ClusterName       string          `yaml:"cluster_name"`
 	TerminatedLogTTL  int             `yaml:"terminated_log_ttl"`
 	API               KubernetesAPI   `yaml:"api"`
+	APICache          KubernetesCache `yaml:"api_cache"`
 	AllowedNamespaces []string        `yaml:"allowed_namespaces"`
 	AppGroups         AppGroupsConfig `yaml:"app_groups"`
 	PodFilters        ResourceFilters `yaml:"pod_filters"`
@@ -72,6 +73,16 @@ type KubernetesConfig struct {
 type KubernetesAPI struct {
 	Burst int     `yaml:"burst"`
 	QPS   float32 `yaml:"qps"`
+}
+
+type KubernetesCache struct {
+	EnableInformers       *bool `yaml:"enable_informers"`
+	InformerResyncSeconds int   `yaml:"informer_resync_seconds"`
+	PodListTTLSeconds     int   `yaml:"pod_list_ttl_seconds"`
+	AppListTTLSeconds     int   `yaml:"app_list_ttl_seconds"`
+	CRDListTTLSeconds     int   `yaml:"crd_list_ttl_seconds"`
+	RetryAttempts         int   `yaml:"retry_attempts"`
+	RetryBaseDelayMillis  int   `yaml:"retry_base_delay_ms"`
 }
 
 type AppGroupsConfig struct {
@@ -184,6 +195,29 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Kubernetes.TerminatedLogTTL == 0 {
 		cfg.Kubernetes.TerminatedLogTTL = int((time.Minute * 60).Seconds())
+	}
+	if cfg.Kubernetes.APICache.PodListTTLSeconds == 0 {
+		cfg.Kubernetes.APICache.PodListTTLSeconds = 2
+	}
+	if cfg.Kubernetes.APICache.AppListTTLSeconds == 0 {
+		cfg.Kubernetes.APICache.AppListTTLSeconds = 5
+	}
+	if cfg.Kubernetes.APICache.CRDListTTLSeconds == 0 {
+		cfg.Kubernetes.APICache.CRDListTTLSeconds = 10
+	}
+	if cfg.Kubernetes.APICache.InformerResyncSeconds == 0 {
+		cfg.Kubernetes.APICache.InformerResyncSeconds = 30
+	}
+	if cfg.Kubernetes.APICache.RetryAttempts == 0 {
+		cfg.Kubernetes.APICache.RetryAttempts = 3
+	}
+	if cfg.Kubernetes.APICache.RetryBaseDelayMillis == 0 {
+		cfg.Kubernetes.APICache.RetryBaseDelayMillis = 200
+	}
+	// default to informers enabled unless explicitly disabled
+	if cfg.Kubernetes.APICache.EnableInformers == nil {
+		enabled := true
+		cfg.Kubernetes.APICache.EnableInformers = &enabled
 	}
 }
 

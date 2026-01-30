@@ -21,6 +21,7 @@ type Server struct {
 	k8sClient    *kubernetes.Clientset
 	sessionStore storage.SessionStore
 	kubeHandler  *dynamicHandler
+	kubeImpl     *api.KubeHandler
 	httpServer   *http.Server
 }
 
@@ -51,7 +52,8 @@ func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.
 	mux.Handle("/api/v1/auth/config", authConfigHandler)
 	mux.Handle("/api/v1/config", auth.Middleware(verifier)(configHandler))
 
-	kubeDynamic := newDynamicHandler(auth.Middleware(verifier)(api.NewKubeHandler(cfg, client)))
+	kubeImpl := api.NewKubeHandler(cfg, client)
+	kubeDynamic := newDynamicHandler(auth.Middleware(verifier)(kubeImpl))
 	mux.Handle("/api/v1/namespaces", kubeDynamic)
 	mux.Handle("/api/v1/namespaces/", kubeDynamic)
 
@@ -64,6 +66,7 @@ func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.
 	}
 
 	s.kubeHandler = kubeDynamic
+	s.kubeImpl = kubeImpl
 	s.httpServer = server
 	return s
 }
@@ -73,6 +76,9 @@ func (s *Server) Start() error {
 }
 
 func (s *Server) Shutdown(ctx context.Context) error {
+	if s.kubeImpl != nil {
+		s.kubeImpl.Stop()
+	}
 	return s.httpServer.Shutdown(ctx)
 }
 
@@ -82,6 +88,10 @@ func (s *Server) UpdateConfig(cfg *config.Config) {
 	}
 	s.cfg.Store(cfg)
 	if s.k8sClient != nil && s.kubeHandler != nil {
-		s.kubeHandler.Update(auth.Middleware(s.auth)(api.NewKubeHandler(cfg, s.k8sClient)))
+		if s.kubeImpl != nil {
+			s.kubeImpl.Stop()
+		}
+		s.kubeImpl = api.NewKubeHandler(cfg, s.k8sClient)
+		s.kubeHandler.Update(auth.Middleware(s.auth)(s.kubeImpl))
 	}
 }

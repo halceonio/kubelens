@@ -2,20 +2,17 @@ package api
 
 import (
 	"context"
+	"math/rand"
 	"sync"
 	"time"
 
 	appsv1 "k8s.io/api/apps/v1"
 	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
-)
 
-const (
-	podCacheTTL   = 2 * time.Second
-	appCacheTTL   = 5 * time.Second
-	crdCacheTTL   = 10 * time.Second
-	cacheMinItems = 0
+	"golang.org/x/sync/singleflight"
 )
 
 type cacheEntry[T any] struct {
@@ -25,15 +22,30 @@ type cacheEntry[T any] struct {
 
 type resourceCache struct {
 	mu          sync.RWMutex
+	podTTL      time.Duration
+	appTTL      time.Duration
+	crdTTL      time.Duration
+	retryCount  int
+	retryBase   time.Duration
 	pods        map[string]cacheEntry[corev1.Pod]
 	deployments map[string]cacheEntry[appsv1.Deployment]
 	statefuls   map[string]cacheEntry[appsv1.StatefulSet]
 	cnpg        map[string]cacheEntry[cnpgCluster]
 	dragonfly   map[string]cacheEntry[dragonflyResource]
+	podGroup    singleflight.Group
+	depGroup    singleflight.Group
+	stsGroup    singleflight.Group
+	cnpgGroup   singleflight.Group
+	dfGroup     singleflight.Group
 }
 
-func newResourceCache() *resourceCache {
+func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration) *resourceCache {
 	return &resourceCache{
+		podTTL:      podTTL,
+		appTTL:      appTTL,
+		crdTTL:      crdTTL,
+		retryCount:  retryCount,
+		retryBase:   retryBase,
 		pods:        map[string]cacheEntry[corev1.Pod]{},
 		deployments: map[string]cacheEntry[appsv1.Deployment]{},
 		statefuls:   map[string]cacheEntry[appsv1.StatefulSet]{},
@@ -43,132 +55,191 @@ func newResourceCache() *resourceCache {
 }
 
 func (c *resourceCache) getPods(namespace string) ([]corev1.Pod, bool) {
-	c.mu.RLock()
-	entry, ok := c.pods[namespace]
-	c.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if time.Since(entry.fetched) > podCacheTTL {
-		return nil, false
-	}
-	return entry.items, true
+	return getCache(c, c.pods, namespace, c.podTTL)
 }
 
 func (c *resourceCache) setPods(namespace string, items []corev1.Pod) {
-	c.mu.Lock()
-	c.pods[namespace] = cacheEntry[corev1.Pod]{items: items, fetched: time.Now()}
-	c.mu.Unlock()
+	setCache(c, c.pods, namespace, items)
 }
 
 func (c *resourceCache) getDeployments(namespace string) ([]appsv1.Deployment, bool) {
-	c.mu.RLock()
-	entry, ok := c.deployments[namespace]
-	c.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if time.Since(entry.fetched) > appCacheTTL {
-		return nil, false
-	}
-	return entry.items, true
+	return getCache(c, c.deployments, namespace, c.appTTL)
 }
 
 func (c *resourceCache) setDeployments(namespace string, items []appsv1.Deployment) {
-	c.mu.Lock()
-	c.deployments[namespace] = cacheEntry[appsv1.Deployment]{items: items, fetched: time.Now()}
-	c.mu.Unlock()
+	setCache(c, c.deployments, namespace, items)
 }
 
 func (c *resourceCache) getStatefulSets(namespace string) ([]appsv1.StatefulSet, bool) {
-	c.mu.RLock()
-	entry, ok := c.statefuls[namespace]
-	c.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if time.Since(entry.fetched) > appCacheTTL {
-		return nil, false
-	}
-	return entry.items, true
+	return getCache(c, c.statefuls, namespace, c.appTTL)
 }
 
 func (c *resourceCache) setStatefulSets(namespace string, items []appsv1.StatefulSet) {
-	c.mu.Lock()
-	c.statefuls[namespace] = cacheEntry[appsv1.StatefulSet]{items: items, fetched: time.Now()}
-	c.mu.Unlock()
+	setCache(c, c.statefuls, namespace, items)
 }
 
 func (c *resourceCache) getCnpg(namespace string) ([]cnpgCluster, bool) {
-	c.mu.RLock()
-	entry, ok := c.cnpg[namespace]
-	c.mu.RUnlock()
-	if !ok {
-		return nil, false
-	}
-	if time.Since(entry.fetched) > crdCacheTTL {
-		return nil, false
-	}
-	return entry.items, true
+	return getCache(c, c.cnpg, namespace, c.crdTTL)
 }
 
 func (c *resourceCache) setCnpg(namespace string, items []cnpgCluster) {
-	c.mu.Lock()
-	c.cnpg[namespace] = cacheEntry[cnpgCluster]{items: items, fetched: time.Now()}
-	c.mu.Unlock()
+	setCache(c, c.cnpg, namespace, items)
 }
 
 func (c *resourceCache) getDragonfly(namespace string) ([]dragonflyResource, bool) {
-	c.mu.RLock()
-	entry, ok := c.dragonfly[namespace]
-	c.mu.RUnlock()
+	return getCache(c, c.dragonfly, namespace, c.crdTTL)
+}
+
+func (c *resourceCache) setDragonfly(namespace string, items []dragonflyResource) {
+	setCache(c, c.dragonfly, namespace, items)
+}
+
+func getCache[T any](cache *resourceCache, store map[string]cacheEntry[T], namespace string, ttl time.Duration) ([]T, bool) {
+	cache.mu.RLock()
+	entry, ok := store[namespace]
+	cache.mu.RUnlock()
 	if !ok {
 		return nil, false
 	}
-	if time.Since(entry.fetched) > crdCacheTTL {
+	if ttl > 0 && time.Since(entry.fetched) > ttl {
 		return nil, false
 	}
 	return entry.items, true
 }
 
-func (c *resourceCache) setDragonfly(namespace string, items []dragonflyResource) {
-	c.mu.Lock()
-	c.dragonfly[namespace] = cacheEntry[dragonflyResource]{items: items, fetched: time.Now()}
-	c.mu.Unlock()
+func setCache[T any](cache *resourceCache, store map[string]cacheEntry[T], namespace string, items []T) {
+	cache.mu.Lock()
+	store[namespace] = cacheEntry[T]{items: items, fetched: time.Now()}
+	cache.mu.Unlock()
 }
 
-func listPods(ctx context.Context, client *kubernetes.Clientset, namespace string) ([]corev1.Pod, error) {
-	pods, err := client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+func (c *resourceCache) doPods(namespace string, fn func() ([]corev1.Pod, error)) ([]corev1.Pod, error) {
+	v, err, _ := c.podGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]corev1.Pod)
+	return items, nil
+}
+
+func (c *resourceCache) doDeployments(namespace string, fn func() ([]appsv1.Deployment, error)) ([]appsv1.Deployment, error) {
+	v, err, _ := c.depGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]appsv1.Deployment)
+	return items, nil
+}
+
+func (c *resourceCache) doStatefulSets(namespace string, fn func() ([]appsv1.StatefulSet, error)) ([]appsv1.StatefulSet, error) {
+	v, err, _ := c.stsGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]appsv1.StatefulSet)
+	return items, nil
+}
+
+func (c *resourceCache) doCnpg(namespace string, fn func() ([]cnpgCluster, error)) ([]cnpgCluster, error) {
+	v, err, _ := c.cnpgGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]cnpgCluster)
+	return items, nil
+}
+
+func (c *resourceCache) doDragonfly(namespace string, fn func() ([]dragonflyResource, error)) ([]dragonflyResource, error) {
+	v, err, _ := c.dfGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]dragonflyResource)
+	return items, nil
+}
+
+func listPods(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]corev1.Pod, error) {
+	var pods *corev1.PodList
+	err := retryK8s(ctx, cache, func(ctx context.Context) error {
+		var err error
+		pods, err = client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
 	if pods == nil {
 		return []corev1.Pod{}, nil
 	}
-	if len(pods.Items) == cacheMinItems {
-		return []corev1.Pod{}, nil
-	}
 	return pods.Items, nil
 }
 
-func listDeployments(ctx context.Context, client *kubernetes.Clientset, namespace string) ([]appsv1.Deployment, error) {
-	deployments, err := client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+func listDeployments(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]appsv1.Deployment, error) {
+	var deployments *appsv1.DeploymentList
+	err := retryK8s(ctx, cache, func(ctx context.Context) error {
+		var err error
+		deployments, err = client.AppsV1().Deployments(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if deployments == nil || len(deployments.Items) == cacheMinItems {
+	if deployments == nil {
 		return []appsv1.Deployment{}, nil
 	}
 	return deployments.Items, nil
 }
 
-func listStatefulSets(ctx context.Context, client *kubernetes.Clientset, namespace string) ([]appsv1.StatefulSet, error) {
-	sets, err := client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+func listStatefulSets(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]appsv1.StatefulSet, error) {
+	var sets *appsv1.StatefulSetList
+	err := retryK8s(ctx, cache, func(ctx context.Context) error {
+		var err error
+		sets, err = client.AppsV1().StatefulSets(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
 	if err != nil {
 		return nil, err
 	}
-	if sets == nil || len(sets.Items) == cacheMinItems {
+	if sets == nil {
 		return []appsv1.StatefulSet{}, nil
 	}
 	return sets.Items, nil
+}
+
+func retryK8s(ctx context.Context, cache *resourceCache, fn func(context.Context) error) error {
+	if cache == nil || cache.retryCount <= 1 || cache.retryBase <= 0 {
+		return fn(ctx)
+	}
+
+	var lastErr error
+	for attempt := 0; attempt < cache.retryCount; attempt++ {
+		if err := fn(ctx); err != nil {
+			lastErr = err
+			if !apierrors.IsTooManyRequests(err) {
+				return err
+			}
+			delay := cache.retryBase * time.Duration(1<<attempt)
+			jitter := time.Duration(rand.Int63n(int64(cache.retryBase / 2)))
+			wait := delay + jitter
+			select {
+			case <-time.After(wait):
+				continue
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		} else {
+			return nil
+		}
+	}
+	return lastErr
 }

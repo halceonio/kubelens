@@ -31,9 +31,15 @@ type KubeHandler struct {
 	appExclude []labelFilter
 	appStreams *appStreamPool
 	cache      *resourceCache
+	informers  *resourceInformers
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandler {
+	apiCache := cfg.Kubernetes.APICache
+	podTTL := time.Duration(apiCache.PodListTTLSeconds) * time.Second
+	appTTL := time.Duration(apiCache.AppListTTLSeconds) * time.Second
+	crdTTL := time.Duration(apiCache.CRDListTTLSeconds) * time.Second
+	retryBase := time.Duration(apiCache.RetryBaseDelayMillis) * time.Millisecond
 	handler := &KubeHandler{
 		cfg:        cfg,
 		client:     client,
@@ -41,10 +47,24 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandl
 		appInclude: compileRegex(cfg.Kubernetes.AppFilters.IncludeRegex),
 		podExclude: parseLabelFilters(cfg.Kubernetes.PodFilters.ExcludeLabels),
 		appExclude: parseLabelFilters(cfg.Kubernetes.AppFilters.ExcludeLabels),
-		cache:      newResourceCache(),
+		cache:      newResourceCache(podTTL, appTTL, crdTTL, apiCache.RetryAttempts, retryBase),
 	}
 	handler.appStreams = newAppStreamPool(handler)
+	if apiCache.EnableInformers != nil && *apiCache.EnableInformers && client != nil {
+		resync := time.Duration(apiCache.InformerResyncSeconds) * time.Second
+		handler.informers = newResourceInformers(client, cfg.Kubernetes.AllowedNamespaces, resync)
+		handler.informers.Start()
+	}
 	return handler
+}
+
+func (h *KubeHandler) Stop() {
+	if h == nil {
+		return
+	}
+	if h.informers != nil {
+		h.informers.Stop()
+	}
 }
 
 func (h *KubeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {

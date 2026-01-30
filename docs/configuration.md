@@ -62,6 +62,14 @@ cache:
 
 kubernetes:
   cluster_name: "enterprise-cluster"
+  api_cache:
+    enable_informers: true
+    informer_resync_seconds: 30
+    pod_list_ttl_seconds: 2
+    app_list_ttl_seconds: 5
+    crd_list_ttl_seconds: 10
+    retry_attempts: 3
+    retry_base_delay_ms: 200
   allowed_namespaces:
     - "apps"
     - "db"

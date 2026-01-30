@@ -705,17 +705,27 @@ func podReady(pod *corev1.Pod) bool {
 }
 
 func (h *KubeHandler) listPodsCached(ctx context.Context, namespace string) ([]corev1.Pod, error) {
-	if h.cache != nil {
-		if items, ok := h.cache.getPods(namespace); ok {
+	if h.informers != nil {
+		if items, ok := h.informers.listPods(namespace); ok {
 			return items, nil
 		}
 	}
-	pods, err := listPods(ctx, h.client, namespace)
+	if h.cache != nil {
+		return h.cache.doPods(namespace, func() ([]corev1.Pod, error) {
+			if items, ok := h.cache.getPods(namespace); ok {
+				return items, nil
+			}
+			pods, err := listPods(ctx, h.client, namespace, h.cache)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setPods(namespace, pods)
+			return pods, nil
+		})
+	}
+	pods, err := listPods(ctx, h.client, namespace, h.cache)
 	if err != nil {
 		return nil, err
-	}
-	if h.cache != nil {
-		h.cache.setPods(namespace, pods)
 	}
 	return pods, nil
 }
@@ -723,6 +733,22 @@ func (h *KubeHandler) listPodsCached(ctx context.Context, namespace string) ([]c
 func (h *KubeHandler) listPodsBySelectorCached(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
 	if selector == "" {
 		return []corev1.Pod{}, nil
+	}
+	if h.informers != nil {
+		sel, err := labels.Parse(selector)
+		if err != nil {
+			return nil, err
+		}
+		if items, ok := h.informers.listPodsBySelector(namespace, sel); ok {
+			filtered := make([]corev1.Pod, 0, len(items))
+			for _, pod := range items {
+				if !h.allowPod(&pod) {
+					continue
+				}
+				filtered = append(filtered, pod)
+			}
+			return filtered, nil
+		}
 	}
 	if podSnapshot, err := h.listPodsCached(ctx, namespace); err == nil {
 		sel, err := labels.Parse(selector)
@@ -741,80 +767,116 @@ func (h *KubeHandler) listPodsBySelectorCached(ctx context.Context, namespace, s
 		return filtered, nil
 	}
 
-	pods, err := h.client.CoreV1().Pods(namespace).List(ctx, metav1.ListOptions{LabelSelector: selector})
+	podSnapshot, err := listPods(ctx, h.client, namespace, h.cache)
 	if err != nil {
 		return nil, err
 	}
-	filtered := make([]corev1.Pod, 0, len(pods.Items))
-	for _, pod := range pods.Items {
+	sel, err := labels.Parse(selector)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]corev1.Pod, 0, len(podSnapshot))
+	for _, pod := range podSnapshot {
 		if !h.allowPod(&pod) {
 			continue
 		}
-		filtered = append(filtered, pod)
+		if sel.Matches(labels.Set(pod.Labels)) {
+			filtered = append(filtered, pod)
+		}
 	}
 	return filtered, nil
 }
 
 func (h *KubeHandler) listDeploymentsCached(ctx context.Context, namespace string) ([]appsv1.Deployment, error) {
-	if h.cache != nil {
-		if items, ok := h.cache.getDeployments(namespace); ok {
+	if h.informers != nil {
+		if items, ok := h.informers.listDeployments(namespace); ok {
 			return items, nil
 		}
 	}
-	deployments, err := listDeployments(ctx, h.client, namespace)
+	if h.cache != nil {
+		return h.cache.doDeployments(namespace, func() ([]appsv1.Deployment, error) {
+			if items, ok := h.cache.getDeployments(namespace); ok {
+				return items, nil
+			}
+			deployments, err := listDeployments(ctx, h.client, namespace, h.cache)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setDeployments(namespace, deployments)
+			return deployments, nil
+		})
+	}
+	deployments, err := listDeployments(ctx, h.client, namespace, h.cache)
 	if err != nil {
 		return nil, err
-	}
-	if h.cache != nil {
-		h.cache.setDeployments(namespace, deployments)
 	}
 	return deployments, nil
 }
 
 func (h *KubeHandler) listStatefulSetsCached(ctx context.Context, namespace string) ([]appsv1.StatefulSet, error) {
-	if h.cache != nil {
-		if items, ok := h.cache.getStatefulSets(namespace); ok {
+	if h.informers != nil {
+		if items, ok := h.informers.listStatefulSets(namespace); ok {
 			return items, nil
 		}
 	}
-	sets, err := listStatefulSets(ctx, h.client, namespace)
+	if h.cache != nil {
+		return h.cache.doStatefulSets(namespace, func() ([]appsv1.StatefulSet, error) {
+			if items, ok := h.cache.getStatefulSets(namespace); ok {
+				return items, nil
+			}
+			sets, err := listStatefulSets(ctx, h.client, namespace, h.cache)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setStatefulSets(namespace, sets)
+			return sets, nil
+		})
+	}
+	sets, err := listStatefulSets(ctx, h.client, namespace, h.cache)
 	if err != nil {
 		return nil, err
-	}
-	if h.cache != nil {
-		h.cache.setStatefulSets(namespace, sets)
 	}
 	return sets, nil
 }
 
 func (h *KubeHandler) listCnpgClustersCached(ctx context.Context, namespace string) ([]cnpgCluster, error) {
 	if h.cache != nil {
-		if items, ok := h.cache.getCnpg(namespace); ok {
-			return items, nil
-		}
+		return h.cache.doCnpg(namespace, func() ([]cnpgCluster, error) {
+			if items, ok := h.cache.getCnpg(namespace); ok {
+				return items, nil
+			}
+			clusters, err := h.listCnpgClusters(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setCnpg(namespace, clusters)
+			return clusters, nil
+		})
 	}
 	clusters, err := h.listCnpgClusters(ctx, namespace)
 	if err != nil {
 		return nil, err
-	}
-	if h.cache != nil {
-		h.cache.setCnpg(namespace, clusters)
 	}
 	return clusters, nil
 }
 
 func (h *KubeHandler) listDragonfliesCached(ctx context.Context, namespace string) ([]dragonflyResource, error) {
 	if h.cache != nil {
-		if items, ok := h.cache.getDragonfly(namespace); ok {
-			return items, nil
-		}
+		return h.cache.doDragonfly(namespace, func() ([]dragonflyResource, error) {
+			if items, ok := h.cache.getDragonfly(namespace); ok {
+				return items, nil
+			}
+			dragonflies, err := h.listDragonflies(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setDragonfly(namespace, dragonflies)
+			return dragonflies, nil
+		})
 	}
 	dragonflies, err := h.listDragonflies(ctx, namespace)
 	if err != nil {
 		return nil, err
-	}
-	if h.cache != nil {
-		h.cache.setDragonfly(namespace, dragonflies)
 	}
 	return dragonflies, nil
 }
@@ -1226,7 +1288,12 @@ func (h *KubeHandler) fetchPodMetrics(ctx context.Context, namespace, name strin
 
 func (h *KubeHandler) listCnpgClusters(ctx context.Context, namespace string) ([]cnpgCluster, error) {
 	path := fmt.Sprintf(cnpgClusterListPathFmt, namespace)
-	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	var data []byte
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		data, err = h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+		return err
+	})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil
@@ -1255,7 +1322,12 @@ func (h *KubeHandler) getCnpgCluster(ctx context.Context, namespace, name string
 
 func (h *KubeHandler) listDragonflies(ctx context.Context, namespace string) ([]dragonflyResource, error) {
 	path := fmt.Sprintf(dragonflyListPathFmt, namespace)
-	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	var data []byte
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		data, err = h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+		return err
+	})
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, nil

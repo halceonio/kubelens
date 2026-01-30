@@ -12,8 +12,9 @@ KubeLens runs as a single pod (frontend + backend + nginx) and exposes a single 
 1) User loads the SPA from nginx.
 2) SPA redirects to Keycloak for auth if needed.
 3) Backend validates JWTs and applies namespace/label filters.
-4) Logs stream via SSE from the backend to the frontend.
-5) User preferences persist via the backend session store.
+4) Kubernetes resources are cached via shared informers and short‑TTL snapshots to reduce API load.
+5) Logs stream via SSE from the backend to the frontend.
+6) User preferences persist via the backend session store.
 
 ## Auth config handshake
 The frontend loads Keycloak settings at runtime from `GET /api/v1/auth/config`.
