@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect } from 'react';
 import { AuthUser } from '../types';
+import { USE_MOCKS } from '../constants';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -40,13 +41,18 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
       if (token) {
         localStorage.setItem('kubelens_access_token', token);
       }
+      if (!token && !USE_MOCKS) {
+        setUser(null);
+        setLoading(false);
+        return;
+      }
       const claims = token ? parseJwtClaims(token) : null;
-      const groups = claims?.groups ?? ['k8s-logs-access', 'developers'];
+      const groups = claims?.groups ?? (USE_MOCKS ? ['k8s-logs-access', 'developers'] : []);
       const authUser: AuthUser = {
-        username: claims?.preferred_username || claims?.email || claims?.sub || 'dev_user',
-        email: claims?.email || 'dev@enterprise.com',
+        username: claims?.preferred_username || claims?.email || claims?.sub || (USE_MOCKS ? 'dev_user' : 'unknown'),
+        email: claims?.email || (USE_MOCKS ? 'dev@enterprise.com' : ''),
         groups,
-        isAuthenticated: true,
+        isAuthenticated: Boolean(token) || USE_MOCKS,
         accessToken: token
       };
       setUser(authUser);
@@ -70,13 +76,18 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
   }
 
   if (!user || !user.groups.includes('k8s-logs-access')) {
+    const missingToken = !user?.accessToken;
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-slate-900 text-white p-6 text-center">
         <div className="bg-red-500/20 p-8 rounded-xl border border-red-500/50 max-w-md">
           <h1 className="text-2xl font-bold text-red-400 mb-4">Access Denied</h1>
           <p className="text-slate-300 mb-6">
-            Your account does not have the required permissions to access <strong>KubeLens</strong>. 
-            You must belong to the <code>k8s-logs-access</code> Keycloak group.
+            {missingToken ? (
+              <>No access token was found. Please sign in again to access <strong>KubeLens</strong>.</>
+            ) : (
+              <>Your account does not have the required permissions to access <strong>KubeLens</strong>. 
+              You must belong to the <code>k8s-logs-access</code> Keycloak group.</>
+            )}
           </p>
           <button 
             onClick={() => window.location.reload()}

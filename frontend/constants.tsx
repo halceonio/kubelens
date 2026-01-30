@@ -1,6 +1,4 @@
 
-import React from 'react';
-
 export const COLORS = {
   bg: '#0f172a',
   sidebar: '#1e293b',
@@ -10,6 +8,8 @@ export const COLORS = {
   warning: '#f59e0b',
   info: '#10b981',
 };
+
+export const USE_MOCKS = (import.meta as any).env?.VITE_USE_MOCKS === 'true';
 
 export const MOCK_CONFIG = {
   keycloakUrl: 'https://sso.enterprise.com',

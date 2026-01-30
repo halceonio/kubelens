@@ -3,7 +3,7 @@ import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
 import { LogEntry, Pod, LogLevel, AppResource } from '../types';
 import { getPodLogs } from '../services/k8sService';
 import * as ReactWindow from 'react-window';
-import { MOCK_CONFIG } from '../constants';
+import { MOCK_CONFIG, USE_MOCKS } from '../constants';
 
 // Robustly resolve FixedSizeList from the ESM module wrapper
 const FixedSizeList = (ReactWindow as any).FixedSizeList || (ReactWindow as any).default?.FixedSizeList || (ReactWindow as any).default;
@@ -138,6 +138,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [isWrapping, setIsWrapping] = useState(false);
   const [showTimestamp, setShowTimestamp] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
@@ -181,14 +182,31 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
 
     if (!resource || !resource.name) return;
 
+    if (!accessToken && !USE_MOCKS) {
+      setLogs([]);
+      setLoadError('Log streaming requires authentication');
+      return;
+    }
+
     if (!accessToken) {
-      fetchLogs();
-      const interval = setInterval(async () => {
-        const podNames = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
-        const containers = !isApp ? (resource as Pod).containers.map(c => c.name) : ['main-app'];
-        const newLogs = await getPodLogs(podNames[0], 5, containers, podNames);
+      setLoadError(null);
+      fetchLogs().catch((err) => {
         if (!mounted) return;
-        setLogs(prev => [...prev.slice(-1500), ...newLogs]);
+        const message = err instanceof Error ? err.message : 'Failed to load logs';
+        setLoadError(message);
+      });
+      const interval = setInterval(async () => {
+        try {
+          const podNames = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
+          const containers = !isApp ? (resource as Pod).containers.map(c => c.name) : ['main-app'];
+          const newLogs = await getPodLogs(podNames[0], 5, containers, podNames);
+          if (!mounted) return;
+          setLogs(prev => [...prev.slice(-1500), ...newLogs]);
+        } catch (err) {
+          if (!mounted) return;
+          const message = err instanceof Error ? err.message : 'Failed to load logs';
+          setLoadError(message);
+        }
       }, 4000);
 
       return () => {
@@ -210,6 +228,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       const controller = new AbortController();
       streamAbortRef.current = controller;
 
+      let received = false;
       try {
         const res = await fetch(url.toString(), {
           headers: {
@@ -220,6 +239,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         if (!res.ok || !res.body) {
           throw new Error(`stream error ${res.status}`);
         }
+        setLoadError(null);
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
@@ -235,6 +255,10 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
             buffer = buffer.slice(splitIndex + 2);
             const parsed = parseSSEEvent(rawEvent);
             if (parsed) {
+              if (!received) {
+                received = true;
+                setLoadError(null);
+              }
               lastTimestampRef.current = parsed.timestamp;
               setLogs(prev => {
                 const next = [...prev, parsed];
@@ -246,6 +270,8 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         }
       } catch (err) {
         if (!mounted) return;
+        const message = err instanceof Error ? err.message : 'Log stream disconnected';
+        setLoadError(message);
         await new Promise(resolve => setTimeout(resolve, 1500));
         if (mounted) {
           connectStream();
@@ -481,6 +507,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         ref={containerRef}
         className="flex-1 bg-slate-950 p-2 overflow-hidden"
       >
+        {loadError && (
+          <div className="mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-500">
+            {loadError}
+          </div>
+        )}
         {filteredLogs.length === 0 ? (
           <div className="h-full flex items-center justify-center text-slate-600 italic text-sm">
             No logs found matching filters

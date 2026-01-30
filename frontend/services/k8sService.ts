@@ -1,6 +1,6 @@
 
 import { Pod, LogEntry, LogLevel, AppResource, Namespace } from '../types';
-import { MOCK_PODS } from '../constants';
+import { MOCK_PODS, MOCK_NAMESPACES, USE_MOCKS } from '../constants';
 
 const API_BASE = '/api/v1';
 
@@ -47,24 +47,36 @@ const generateMockLog = (podName: string, containerName: string, minutesOffset: 
 };
 
 export const getNamespaces = async (token?: string | null): Promise<Namespace[]> => {
-  if (token) {
-    try {
-      return await fetchJSON<Namespace[]>(`${API_BASE}/namespaces`, token);
-    } catch (err) {
-      console.warn('Failed to load namespaces from backend', err);
-    }
+  if (!token) {
+    if (USE_MOCKS) return MOCK_NAMESPACES;
+    throw new Error('Missing access token');
   }
-  return [];
+
+  try {
+    return await fetchJSON<Namespace[]>(`${API_BASE}/namespaces`, token);
+  } catch (err) {
+    console.warn('Failed to load namespaces from backend', err);
+    if (USE_MOCKS) return MOCK_NAMESPACES;
+    throw err;
+  }
 };
 
 export const getPods = async (namespace: string, token?: string | null): Promise<Pod[]> => {
+  if (!token && !USE_MOCKS) {
+    throw new Error('Missing access token');
+  }
+
   if (token) {
     try {
       return await fetchJSON<Pod[]>(`${API_BASE}/namespaces/${namespace}/pods`, token);
     } catch (err) {
       console.warn('Failed to load pods from backend', err);
+      if (!USE_MOCKS) throw err;
     }
   }
+
+  if (!USE_MOCKS) return [];
+
   return new Promise((resolve) => {
     setTimeout(() => {
       const basePods = (MOCK_PODS[namespace] || []) as any[];
@@ -113,13 +125,21 @@ export const getPodByName = async (namespace: string, name: string, token?: stri
 };
 
 export const getApps = async (namespace: string, token?: string | null): Promise<AppResource[]> => {
+  if (!token && !USE_MOCKS) {
+    throw new Error('Missing access token');
+  }
+
   if (token) {
     try {
       return await fetchJSON<AppResource[]>(`${API_BASE}/namespaces/${namespace}/apps`, token);
     } catch (err) {
       console.warn('Failed to load apps from backend', err);
+      if (!USE_MOCKS) throw err;
     }
   }
+
+  if (!USE_MOCKS) return [];
+
   return new Promise((resolve) => {
     setTimeout(() => {
       const apps: AppResource[] = [
@@ -204,6 +224,9 @@ export const getAppByName = async (namespace: string, name: string, token?: stri
 };
 
 export const getPodLogs = async (podName: string, count: number = 100, containers: string[] = ['main-app'], multiPodNames?: string[]): Promise<LogEntry[]> => {
+  if (!USE_MOCKS) {
+    throw new Error('Live log streaming requires authentication');
+  }
   return new Promise((resolve) => {
     setTimeout(() => {
       const logs: LogEntry[] = [];

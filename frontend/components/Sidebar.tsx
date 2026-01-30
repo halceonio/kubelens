@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useMemo } from 'react';
 import { Namespace, Pod, AppResource, ResourceIdentifier } from '../types';
-import { MOCK_NAMESPACES, MOCK_CONFIG } from '../constants';
+import { MOCK_NAMESPACES, MOCK_CONFIG, USE_MOCKS } from '../constants';
 import { getPods, getApps, getNamespaces } from '../services/k8sService';
 
 interface SidebarProps {
@@ -30,7 +30,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [viewMode, setViewMode] = useState<ViewMode>(
     MOCK_CONFIG.appGroups.enabled ? 'groups' : 'pods'
   );
-  const [namespaces, setNamespaces] = useState<Namespace[]>(MOCK_NAMESPACES);
+  const [namespaces, setNamespaces] = useState<Namespace[]>(USE_MOCKS ? MOCK_NAMESPACES : []);
   const [expandedNamespace, setExpandedNamespace] = useState<string | null>(null);
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
   
@@ -41,6 +41,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [loading, setLoading] = useState<string | null>(null);
   const [isAllAppsLoading, setIsAllAppsLoading] = useState(false);
   const [search, setSearch] = useState('');
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   const isPinned = (type: 'pod' | 'app', namespace: string, name: string) => {
     return pinnedIds.some(id => id.type === type && id.namespace === namespace && id.name === name);
@@ -54,12 +55,18 @@ const Sidebar: React.FC<SidebarProps> = ({
     
     setExpandedNamespace(ns);
     setLoading(ns);
-    if (viewMode === 'pods' && !pods[ns]) {
-      const nsPods = await getPods(ns, accessToken);
-      setPods(prev => ({ ...prev, [ns]: nsPods }));
-    } else if (viewMode === 'apps' && !apps[ns]) {
-      const nsApps = await getApps(ns, accessToken);
-      setApps(prev => ({ ...prev, [ns]: nsApps }));
+    try {
+      if (viewMode === 'pods' && !pods[ns]) {
+        const nsPods = await getPods(ns, accessToken);
+        setPods(prev => ({ ...prev, [ns]: nsPods }));
+      } else if (viewMode === 'apps' && !apps[ns]) {
+        const nsApps = await getApps(ns, accessToken);
+        setApps(prev => ({ ...prev, [ns]: nsApps }));
+      }
+      setLoadError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load resources';
+      setLoadError(message);
     }
     setLoading(null);
   };
@@ -72,34 +79,56 @@ const Sidebar: React.FC<SidebarProps> = ({
   useEffect(() => {
     const fetchAllApps = async () => {
       if (viewMode !== 'groups' || allApps.length > 0) return;
-      
+
       setIsAllAppsLoading(true);
-      const all: AppResource[] = [];
-      const targetNamespaces = namespaces.length > 0 ? namespaces.map(n => n.name) : MOCK_CONFIG.allowedNamespaces;
-      for (const ns of targetNamespaces) {
-        const nsApps = await getApps(ns, accessToken);
-        all.push(...nsApps);
+      try {
+        const all: AppResource[] = [];
+        const targetNamespaces = namespaces.length > 0 ? namespaces.map(n => n.name) : MOCK_CONFIG.allowedNamespaces;
+        for (const ns of targetNamespaces) {
+          const nsApps = await getApps(ns, accessToken);
+          all.push(...nsApps);
+        }
+        setAllApps(all);
+        setLoadError(null);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : 'Failed to load apps';
+        setLoadError(message);
+      } finally {
+        setIsAllAppsLoading(false);
       }
-      setAllApps(all);
-      setIsAllAppsLoading(false);
     };
     fetchAllApps();
   }, [viewMode, namespaces, accessToken]);
 
   useEffect(() => {
     if (!accessToken) {
-      setNamespaces(MOCK_NAMESPACES);
+      if (USE_MOCKS) {
+        setNamespaces(MOCK_NAMESPACES);
+        setLoadError(null);
+      } else {
+        setNamespaces([]);
+        setLoadError('Missing access token');
+      }
       return;
     }
     getNamespaces(accessToken)
       .then((data) => {
         if (data && data.length > 0) {
           setNamespaces(data);
+          setLoadError(null);
         }
       })
       .catch((err) => {
         console.warn('Failed to load namespaces', err);
+        const message = err instanceof Error ? err.message : 'Failed to load namespaces';
+        setLoadError(message);
       });
+  }, [accessToken]);
+
+  useEffect(() => {
+    setPods({});
+    setApps({});
+    setAllApps([]);
   }, [accessToken]);
 
   const appGroupsMap = useMemo(() => {
@@ -230,6 +259,12 @@ const Sidebar: React.FC<SidebarProps> = ({
           </div>
         </div>
 
+        {loadError && (
+          <div className="mx-4 mb-2 rounded-md border border-red-500/30 bg-red-500/10 px-3 py-2 text-[10px] text-red-500">
+            {loadError}
+          </div>
+        )}
+
         <div className="flex-1 overflow-y-auto py-2 custom-scrollbar transition-colors duration-200">
           {/* Pinned Section */}
           {pinnedIds.length > 0 && (
@@ -278,6 +313,10 @@ const Sidebar: React.FC<SidebarProps> = ({
               <div className="px-8 py-4 flex items-center gap-3 text-xs text-slate-400 dark:text-slate-500 italic">
                 <div className="w-3 h-3 rounded-full bg-sky-500 animate-pulse"></div>
                 Analyzing App Groups...
+              </div>
+            ) : sortedGroupKeys.length === 0 ? (
+              <div className="px-8 py-4 text-xs text-slate-400 dark:text-slate-500 italic">
+                No app groups available
               </div>
             ) : (
               sortedGroupKeys.map((group) => {
