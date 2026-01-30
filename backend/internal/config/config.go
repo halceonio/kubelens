@@ -39,10 +39,20 @@ type AuthConfig struct {
 }
 
 type LogsConfig struct {
-	DefaultTailLines int `yaml:"default_tail_lines"`
-	MaxTailLines     int `yaml:"max_tail_lines"`
-	MaxLineLength    int `yaml:"max_line_length"`
-	AppStreamResync  int `yaml:"app_stream_resync_seconds"`
+	DefaultTailLines       int    `yaml:"default_tail_lines"`
+	MaxTailLines           int    `yaml:"max_tail_lines"`
+	MaxLineLength          int    `yaml:"max_line_length"`
+	AppStreamResync        int    `yaml:"app_stream_resync_seconds"`
+	WorkerIdleTTLSeconds   int    `yaml:"worker_idle_ttl_seconds"`
+	WorkerBufferLines      int    `yaml:"worker_buffer_lines"`
+	WorkerBufferMaxBytes   int    `yaml:"worker_buffer_max_bytes"`
+	SubscriberBufferLines  int    `yaml:"subscriber_buffer_lines"`
+	UseRedisStreams        bool   `yaml:"use_redis_streams"`
+	RedisStreamPrefix      string `yaml:"redis_stream_prefix"`
+	RedisStreamMaxLen      int    `yaml:"redis_stream_maxlen"`
+	RedisStreamBlockMillis int    `yaml:"redis_stream_block_millis"`
+	RedisLockTTLSeconds    int    `yaml:"redis_lock_ttl_seconds"`
+	RedisURLOverride       string `yaml:"redis_url"`
 }
 
 type SessionConfig struct {

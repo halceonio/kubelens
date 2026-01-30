@@ -142,6 +142,7 @@ kubernetes:
 - For local testing, `KUBELENS_KUBECONFIG` or `KUBECONFIG` can point to a kubeconfig file.
 - Set `kubernetes.api_cache.metadata_only: true` to return lightweight metadata lists (full details are fetched on demand).
 - Prometheus-style cache metrics are exposed at `GET /api/v1/metrics`.
+- Shared log workers can be enabled with `logs.use_redis_streams: true` (requires `cache.redis_url` or `logs.redis_url`).
 
 ## Documentation
 - `docs/index.md` entry point

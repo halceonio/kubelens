@@ -279,18 +279,34 @@ func (s *appStream) syncPodStreams(desired map[string]corev1.Pod) {
 
 func (s *appStream) consumePodStream(ctx context.Context, podName string) {
 	defer s.markPodInactive(podName)
-	opts := &corev1.PodLogOptions{
-		Follow:     true,
-		Timestamps: true,
-		TailLines:  &s.tail,
-		Container:  s.container,
-	}
-	stream, err := s.handler.client.CoreV1().Pods(s.namespace).GetLogs(podName, opts).Stream(ctx)
+	sub, replay, unsubscribe, err := s.handler.logHub.SubscribePod(ctx, s.namespace, podName, s.container, s.tail, logResume{})
 	if err != nil {
 		return
 	}
-	defer stream.Close()
-	s.handler.consumeLogStreamToChannel(ctx, stream, podName, opts.Container, s.logCh)
+	defer unsubscribe()
+
+	emit := func(entry logEntry) {
+		select {
+		case s.logCh <- entry:
+		default:
+		}
+	}
+
+	for _, entry := range replay {
+		emit(entry)
+	}
+
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case entry, ok := <-sub.ch:
+			if !ok {
+				return
+			}
+			emit(entry)
+		}
+	}
 }
 
 func (s *appStream) activePodCount() int {
@@ -430,9 +446,13 @@ func newJSONEvent(event string, payload any) sseEvent {
 
 func newLogEvent(entry logEntry) sseEvent {
 	data, _ := json.Marshal(entry)
+	id := entry.ID
+	if id == "" {
+		id = entry.Timestamp
+	}
 	return sseEvent{
 		Event: "log",
-		ID:    entry.Timestamp,
+		ID:    id,
 		Data:  data,
 	}
 }

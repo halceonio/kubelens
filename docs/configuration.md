@@ -24,6 +24,19 @@ logs:
 ```
 This controls how often app log streams re-check pod membership to pick up new replicas or rolling updates.
 
+## Shared log workers (Redis Streams)
+KubeLens can pool log streams across multiple backend replicas using Redis Streams:
+```yaml
+logs:
+  use_redis_streams: true
+  redis_stream_prefix: "kubelens:logs"
+  redis_stream_maxlen: 10000
+  redis_stream_block_millis: 2000
+  redis_lock_ttl_seconds: 15
+  redis_url: "" # optional override; defaults to cache.redis_url
+```
+When enabled, each pod/container log stream is handled by a single leader that writes to Redis, while other replicas read and fan out to their subscribers. This reduces upstream Kubernetes log streams and improves team-scale usage.
+
 ## API cache modes
 The API cache supports an optional metadata-only list mode to reduce API server load:
 ```yaml

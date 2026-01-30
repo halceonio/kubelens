@@ -36,6 +36,7 @@ type KubeHandler struct {
 	stats      *ResourceStats
 	statsStop  chan struct{}
 	metaClient metadata.Interface
+	logHub     *logStreamHub
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metadata.Interface) *KubeHandler {
@@ -57,6 +58,7 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 		statsStop:  make(chan struct{}),
 		metaClient: meta,
 	}
+	handler.logHub = newLogStreamHub(handler)
 	handler.appStreams = newAppStreamPool(handler)
 	if !apiCache.MetadataOnly && apiCache.EnableInformers != nil && *apiCache.EnableInformers && client != nil {
 		resync := time.Duration(apiCache.InformerResyncSeconds) * time.Second
@@ -76,6 +78,9 @@ func (h *KubeHandler) Stop() {
 	}
 	if h.informers != nil {
 		h.informers.Stop()
+	}
+	if h.logHub != nil {
+		h.logHub.stop()
 	}
 }
 
@@ -142,22 +147,28 @@ func (h *KubeHandler) streamPodLogs(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	opts := h.buildLogOptions(r)
-	stream, err := h.client.CoreV1().Pods(namespace).GetLogs(name, opts).Stream(r.Context())
+	req := parseLogRequest(r, h.cfg)
+	sub, replay, unsubscribe, err := h.logHub.SubscribePod(r.Context(), namespace, name, req.container, req.tail, req.resume)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, fmt.Sprintf("log stream error: %v", err))
 		return
 	}
-	defer stream.Close()
+	defer unsubscribe()
 
 	setSSEHeaders(w)
 	flusher.Flush()
 
-	logCh := make(chan logEntry, appStreamLogBuffer)
-	go h.consumeLogStreamToChannel(r.Context(), stream, name, opts.Container, logCh)
+	for _, entry := range replay {
+		if err := writeSSEEvent(w, newLogEvent(entry)); err != nil {
+			return
+		}
+	}
+	flusher.Flush()
 
 	heartbeat := time.NewTicker(appStreamHeartbeatPeriod)
 	defer heartbeat.Stop()
+	statsTicker := time.NewTicker(appStreamStatsPeriod)
+	defer statsTicker.Stop()
 	statusPeriod := time.Duration(h.cfg.Logs.AppStreamResync) * time.Second
 	if statusPeriod <= 0 {
 		statusPeriod = 10 * time.Second
@@ -191,6 +202,16 @@ func (h *KubeHandler) streamPodLogs(w http.ResponseWriter, r *http.Request, name
 				return
 			}
 			flusher.Flush()
+		case <-statsTicker.C:
+			stats := streamStats{
+				Dropped:  sub.dropped.Load(),
+				Buffered: len(sub.ch),
+			}
+			event := newJSONEvent("stats", stats)
+			if err := writeSSEEvent(w, event); err != nil {
+				return
+			}
+			flusher.Flush()
 		case <-statusTicker.C:
 			pod, err := h.client.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
 			if err != nil {
@@ -217,7 +238,7 @@ func (h *KubeHandler) streamPodLogs(w http.ResponseWriter, r *http.Request, name
 				prevReady = ready
 			}
 			flusher.Flush()
-		case entry, ok := <-logCh:
+		case entry, ok := <-sub.ch:
 			if !ok {
 				return
 			}
@@ -290,10 +311,23 @@ func (h *KubeHandler) consumeLogStreamToChannel(ctx context.Context, stream ioRe
 }
 
 type logEntry struct {
+	ID            string `json:"id,omitempty"`
+	Seq           uint64 `json:"seq,omitempty"`
 	Timestamp     string `json:"timestamp"`
 	Message       string `json:"message"`
 	PodName       string `json:"podName"`
 	ContainerName string `json:"containerName"`
+}
+
+type logResume struct {
+	sinceID   string
+	sinceTime *time.Time
+}
+
+type logRequest struct {
+	container string
+	tail      int64
+	resume    logResume
 }
 
 func (h *KubeHandler) parseLogLine(line, podName, containerName string) logEntry {
@@ -326,6 +360,47 @@ func (h *KubeHandler) parseLogLine(line, podName, containerName string) logEntry
 		PodName:       podName,
 		ContainerName: containerName,
 	}
+}
+
+func parseLogRequest(r *http.Request, cfg *config.Config) logRequest {
+	tail := parseTailLines(r.URL.Query().Get("tail"), cfg.Logs.DefaultTailLines, cfg.Logs.MaxTailLines)
+	container := r.URL.Query().Get("container")
+
+	var sinceTime *time.Time
+	if since := r.URL.Query().Get("since"); since != "" {
+		if t, ok := parseLogTime(since); ok {
+			sinceTime = &t
+		}
+	}
+
+	lastID := r.URL.Query().Get("since_id")
+	if lastID == "" {
+		lastID = r.Header.Get("Last-Event-ID")
+	}
+	if sinceTime == nil && lastID != "" {
+		if t, ok := parseLogTime(lastID); ok {
+			sinceTime = &t
+		}
+	}
+
+	return logRequest{
+		container: container,
+		tail:      tail,
+		resume: logResume{
+			sinceID:   lastID,
+			sinceTime: sinceTime,
+		},
+	}
+}
+
+func parseLogTime(raw string) (time.Time, bool) {
+	if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return parsed, true
+	}
+	if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+		return parsed, true
+	}
+	return time.Time{}, false
 }
 
 func (h *KubeHandler) buildLogOptions(r *http.Request) *corev1.PodLogOptions {
@@ -414,7 +489,11 @@ func writeSSE(w http.ResponseWriter, entry logEntry) error {
 	if err != nil {
 		return err
 	}
-	return writeSSEEvent(w, sseEvent{Event: "log", ID: entry.Timestamp, Data: payload})
+	id := entry.ID
+	if id == "" {
+		id = entry.Timestamp
+	}
+	return writeSSEEvent(w, sseEvent{Event: "log", ID: id, Data: payload})
 }
 
 func writeSSEEvent(w http.ResponseWriter, event sseEvent) error {

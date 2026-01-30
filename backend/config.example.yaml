@@ -19,6 +19,16 @@ logs:
   max_tail_lines: 10000
   max_line_length: 10000
   app_stream_resync_seconds: 10
+  worker_idle_ttl_seconds: 60
+  worker_buffer_lines: 10000
+  worker_buffer_max_bytes: 52428800
+  subscriber_buffer_lines: 2000
+  use_redis_streams: false
+  redis_stream_prefix: "kubelens:logs"
+  redis_stream_maxlen: 10000
+  redis_stream_block_millis: 2000
+  redis_lock_ttl_seconds: 15
+  redis_url: ""
 
 session:
   max_bytes: 262144
