@@ -18,6 +18,7 @@ logs:
   default_tail_lines: 10000
   max_tail_lines: 10000
   max_line_length: 10000
+  app_stream_resync_seconds: 10
 
 session:
   max_bytes: 262144

@@ -196,7 +196,11 @@ func (h *KubeHandler) streamAppLogs(w http.ResponseWriter, r *http.Request, name
 		lastHash = hash
 	}
 
-	ticker := time.NewTicker(10 * time.Second)
+	interval := time.Duration(h.cfg.Logs.AppStreamResync) * time.Second
+	if interval <= 0 {
+		interval = 10 * time.Second
+	}
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
 	for {

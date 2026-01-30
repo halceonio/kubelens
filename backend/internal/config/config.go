@@ -41,6 +41,7 @@ type LogsConfig struct {
 	DefaultTailLines int `yaml:"default_tail_lines"`
 	MaxTailLines     int `yaml:"max_tail_lines"`
 	MaxLineLength    int `yaml:"max_line_length"`
+	AppStreamResync  int `yaml:"app_stream_resync_seconds"`
 }
 
 type SessionConfig struct {
@@ -163,6 +164,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Logs.MaxLineLength == 0 {
 		cfg.Logs.MaxLineLength = 10000
+	}
+	if cfg.Logs.AppStreamResync == 0 {
+		cfg.Logs.AppStreamResync = 10
 	}
 	if cfg.Session.MaxBytes == 0 {
 		cfg.Session.MaxBytes = 256 * 1024

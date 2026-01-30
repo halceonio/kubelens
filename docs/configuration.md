@@ -4,7 +4,7 @@ KubeLens uses a YAML config file for backend behavior. See `backend/config.examp
 
 ## Highlights
 - **Auth**: Keycloak OIDC with required group membership.
-- **Logs**: Defaults to 10,000 tail lines with 10,000 character max line length.
+- **Logs**: Defaults to 10,000 tail lines with 10,000 character max line length. App log streams resync pod membership every 10s by default.
 - **Session storage**: Redis, sqlite, or postgres.
 - **Kubernetes**: Namespace allowlist, app grouping labels, include/exclude filters.
 
@@ -14,6 +14,13 @@ The frontend reads Keycloak settings at runtime from:
 GET /api/v1/auth/config
 ```
 This endpoint returns the Keycloak URL, realm, client ID, and allowed groups from the backend config. It does **not** return secrets. The UI caches this response locally for a few minutes and will only fall back to build-time `VITE_KEYCLOAK_*` overrides if the endpoint is unavailable.
+
+## Log stream tuning
+```yaml
+logs:
+  app_stream_resync_seconds: 10
+```
+This controls how often app log streams re-check pod membership to pick up new replicas or rolling updates.
 
 ## Example
 ```yaml

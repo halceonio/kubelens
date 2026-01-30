@@ -29,6 +29,7 @@ config:
     defaultTailLines: 10000
     maxTailLines: 10000
     maxLineLength: 10000
+    appStreamResyncSeconds: 10
   session:
     maxBytes: 262144
   storage:
