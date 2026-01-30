@@ -3,11 +3,14 @@ package api
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -99,50 +102,113 @@ func (h *KubeHandler) streamAppLogs(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	pods, err := h.listPodsForApp(r.Context(), namespace, name)
-	if err != nil {
+	setSSEHeaders(w)
+	flusher.Flush()
+
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
+
+	logCh := make(chan logEntry, 256)
+	doneCh := make(chan string, 128)
+	baseOpts := h.buildLogOptions(r)
+
+	var mu sync.Mutex
+	active := make(map[string]context.CancelFunc)
+
+	startStream := func(podName string) {
+		mu.Lock()
+		if _, exists := active[podName]; exists {
+			mu.Unlock()
+			return
+		}
+		streamCtx, streamCancel := context.WithCancel(ctx)
+		active[podName] = streamCancel
+		mu.Unlock()
+
+		go func() {
+			optsCopy := *baseOpts
+			stream, err := h.client.CoreV1().Pods(namespace).GetLogs(podName, &optsCopy).Stream(streamCtx)
+			if err != nil {
+				doneCh <- podName
+				return
+			}
+			defer stream.Close()
+			h.consumeLogStreamToChannel(streamCtx, stream, podName, optsCopy.Container, logCh)
+			doneCh <- podName
+		}()
+	}
+
+	stopStream := func(podName string) {
+		mu.Lock()
+		cancelFn, exists := active[podName]
+		if exists {
+			delete(active, podName)
+		}
+		mu.Unlock()
+		if exists {
+			cancelFn()
+		}
+	}
+
+	reconcilePods := func(currentHash string) (string, error) {
+		pods, err := h.listPodsForApp(ctx, namespace, name)
+		if err != nil {
+			return currentHash, err
+		}
+		nextHash := hashStrings(pods)
+		if nextHash == currentHash {
+			return currentHash, nil
+		}
+
+		desired := make(map[string]struct{}, len(pods))
+		for _, pod := range pods {
+			desired[pod] = struct{}{}
+		}
+
+		mu.Lock()
+		for pod := range active {
+			if _, ok := desired[pod]; !ok {
+				mu.Unlock()
+				stopStream(pod)
+				mu.Lock()
+			}
+		}
+		for pod := range desired {
+			if _, ok := active[pod]; !ok {
+				mu.Unlock()
+				startStream(pod)
+				mu.Lock()
+			}
+		}
+		mu.Unlock()
+		return nextHash, nil
+	}
+
+	var lastHash string
+	if hash, err := reconcilePods(""); err != nil {
 		status := http.StatusNotFound
 		if !errors.Is(err, errAppNotFound) {
 			status = http.StatusBadGateway
 		}
 		writeError(w, status, err.Error())
 		return
-	}
-	if len(pods) == 0 {
-		writeError(w, http.StatusNotFound, "no pods found for app")
-		return
+	} else {
+		lastHash = hash
 	}
 
-	setSSEHeaders(w)
-	flusher.Flush()
-
-	logCh := make(chan logEntry, 128)
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-
-	var wg sync.WaitGroup
-	for _, pod := range pods {
-		podName := pod
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			opts := h.buildLogOptions(r)
-			stream, err := h.client.CoreV1().Pods(namespace).GetLogs(podName, opts).Stream(ctx)
-			if err != nil {
-				return
-			}
-			defer stream.Close()
-			h.consumeLogStreamToChannel(ctx, stream, podName, opts.Container, logCh)
-		}()
-	}
-
-	go func() {
-		wg.Wait()
-		close(logCh)
-	}()
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
 
 	for {
 		select {
+		case <-ticker.C:
+			if hash, err := reconcilePods(lastHash); err == nil {
+				lastHash = hash
+			}
+		case podName := <-doneCh:
+			mu.Lock()
+			delete(active, podName)
+			mu.Unlock()
 		case <-ctx.Done():
 			return
 		case entry, ok := <-logCh:
@@ -279,6 +345,21 @@ func parseTailLines(raw string, def int, max int) int64 {
 		tail = def
 	}
 	return int64(tail)
+}
+
+func hashStrings(items []string) string {
+	if len(items) == 0 {
+		return ""
+	}
+	sorted := make([]string, len(items))
+	copy(sorted, items)
+	sort.Strings(sorted)
+	sum := sha256.New()
+	for _, item := range sorted {
+		sum.Write([]byte(item))
+		sum.Write([]byte{0})
+	}
+	return hex.EncodeToString(sum.Sum(nil))
 }
 
 func (h *KubeHandler) isAllowedNamespace(ns string) bool {

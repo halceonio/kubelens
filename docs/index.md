@@ -15,4 +15,6 @@ KubeLens is a read-only Kubernetes log analyzer that provides a focused UI for l
 - `frontend/` React + Vite UI
 - `backend/` Go API server (auth, sessions, Kubernetes proxy)
 - `docker/` Dockerfile, nginx, supervisor, and compose assets
+- `charts/` Helm chart (namespace: `monitoring`)
+- `deploy/` Kustomize manifests (namespace: `monitoring`)
 - `refs/` product and backend specs
