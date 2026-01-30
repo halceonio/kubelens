@@ -15,11 +15,14 @@ COPY frontend ./
 RUN npm run build
 
 FROM nginx:1.25-alpine
-RUN apk add --no-cache supervisor
+RUN apk add --no-cache supervisor valkey sqlite
 COPY docker/nginx.conf /etc/nginx/conf.d/default.conf
 COPY docker/supervisord.conf /etc/supervisord.conf
+COPY docker/valkey.conf /etc/valkey/valkey.conf
+COPY docker/entrypoint.sh /usr/local/bin/kubelens-entrypoint.sh
 COPY --from=backend-build /out/kubelens-backend /usr/local/bin/kubelens-backend
 COPY --from=frontend-build /src/frontend/dist /usr/share/nginx/html
-RUN mkdir -p /var/lib/kubelens
+RUN mkdir -p /var/lib/kubelens /etc/supervisord.d /etc/valkey \
+  && chmod +x /usr/local/bin/kubelens-entrypoint.sh
 EXPOSE 80
-ENTRYPOINT ["/usr/bin/supervisord","-c","/etc/supervisord.conf"]
+ENTRYPOINT ["/usr/local/bin/kubelens-entrypoint.sh"]
