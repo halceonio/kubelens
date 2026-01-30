@@ -57,7 +57,7 @@ CA_DATA=$(kubectl config view --raw -o jsonpath='{.clusters[?(@.name=="'"${CLUST
 if [[ -z "${CA_DATA}" ]]; then
   CA_FILE=$(kubectl config view --raw -o jsonpath='{.clusters[?(@.name=="'"${CLUSTER}"'")].cluster.certificate-authority}')
   if [[ -n "${CA_FILE}" && -f "${CA_FILE}" ]]; then
-    CA_DATA=$(base64 -w 0 "${CA_FILE}")
+    CA_DATA=$(base64 < "${CA_FILE}" | tr -d '\n')
   fi
 fi
 

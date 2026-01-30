@@ -9,6 +9,7 @@ backend-build: ## Build backend server binary
 	cd backend && go build ./cmd/server
 
 backend-run: ## Run backend with test config
+	mkdir -p backend/data
 	KUBELENS_CONFIG=backend/config.test.yaml go run ./backend/cmd/server
 
 backend-tidy: ## Tidy backend Go modules
