@@ -1,12 +1,9 @@
 
-import React, { useState, useEffect, useRef, useMemo, memo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
 import { LogEntry, Pod, LogLevel, AppResource, UiConfig } from '../types';
 import { getPodLogs } from '../services/k8sService';
-import * as ReactWindow from 'react-window';
+import { FixedSizeList } from 'react-window';
 import { DEFAULT_UI_CONFIG, USE_MOCKS } from '../constants';
-
-// Robustly resolve FixedSizeList from the ESM module wrapper
-const FixedSizeList = (ReactWindow as any).FixedSizeList || (ReactWindow as any).default?.FixedSizeList || (ReactWindow as any).default;
 
 interface LogViewProps {
   resource: Pod | AppResource;
@@ -14,6 +11,8 @@ interface LogViewProps {
   isMaximized?: boolean;
   accessToken?: string | null;
   config?: UiConfig | null;
+  initialLogLevel?: LogLevel | 'ALL';
+  onLogLevelChange?: (level: LogLevel | 'ALL') => void;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -26,7 +25,20 @@ interface RowData {
   showTimestamp: boolean;
   isApp: boolean;
   isWrapping: boolean;
+  searchQuery: string;
+  activeMatchIndex: number | null;
 }
+
+type StreamStats = {
+  dropped: number;
+  buffered: number;
+};
+
+type ParsedEvent =
+  | { kind: 'log'; entry: LogEntry }
+  | { kind: 'marker'; entry: LogEntry }
+  | { kind: 'stats'; stats: StreamStats }
+  | { kind: 'heartbeat' };
 
 const deriveLevel = (message: string): LogLevel => {
   const lower = message.toLowerCase();
@@ -36,13 +48,16 @@ const deriveLevel = (message: string): LogLevel => {
   return 'INFO';
 };
 
-const parseSSEEvent = (raw: string): LogEntry | null => {
+const parseSSEEvent = (raw: string): ParsedEvent | null => {
   const lines = raw.split('\n');
   let id = '';
+  let eventType = 'log';
   const dataLines: string[] = [];
   lines.forEach(line => {
     if (line.startsWith('id:')) {
       id = line.slice(3).trim();
+    } else if (line.startsWith('event:')) {
+      eventType = line.slice(6).trim();
     } else if (line.startsWith('data:')) {
       dataLines.push(line.slice(5).trimStart());
     }
@@ -50,31 +65,74 @@ const parseSSEEvent = (raw: string): LogEntry | null => {
 
   if (dataLines.length === 0) return null;
   try {
-    const payload = JSON.parse(dataLines.join('\n')) as Partial<LogEntry> & {
-      message?: string;
-      timestamp?: string;
-      podName?: string;
-      containerName?: string;
-      level?: LogLevel;
-      id?: string;
-    };
-    const timestamp = payload.timestamp || id || new Date().toISOString();
-    const message = payload.message || '';
-    return {
-      id: payload.id || `${timestamp}-${payload.podName || 'pod'}`,
+    const payload = JSON.parse(dataLines.join('\n')) as any;
+
+    if (eventType === 'stats') {
+      return {
+        kind: 'stats',
+        stats: {
+          dropped: Number(payload?.dropped ?? 0),
+          buffered: Number(payload?.buffered ?? 0)
+        }
+      };
+    }
+
+    if (eventType === 'heartbeat') {
+      return { kind: 'heartbeat' };
+    }
+
+    const timestamp = payload?.timestamp || id || new Date().toISOString();
+    const message = payload?.message || '';
+    const baseEntry: LogEntry = {
+      id: payload?.id || `${timestamp}-${payload?.podName || 'pod'}`,
       timestamp,
       message,
-      podName: payload.podName || 'unknown',
-      containerName: payload.containerName || 'main',
-      level: payload.level || deriveLevel(message)
+      podName: payload?.podName || 'unknown',
+      containerName: payload?.containerName || 'main',
+      level: payload?.level || deriveLevel(message)
     };
+
+    if (eventType === 'marker') {
+      return {
+        kind: 'marker',
+        entry: {
+          ...baseEntry,
+          kind: 'marker',
+          markerKind: payload?.kind || 'marker'
+        }
+      };
+    }
+
+    return { kind: 'log', entry: { ...baseEntry, kind: 'log' } };
   } catch {
     return null;
   }
 };
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+const highlightText = (text: string, query: string) => {
+  if (!query) return text;
+  const regex = new RegExp(escapeRegExp(query), 'ig');
+  const parts = text.split(regex);
+  const matches = text.match(regex);
+  if (!matches) return text;
+  const output: React.ReactNode[] = [];
+  parts.forEach((part, idx) => {
+    output.push(part);
+    if (matches[idx]) {
+      output.push(
+        <mark key={`${part}-${idx}`} className="bg-sky-500/30 text-slate-100 rounded px-0.5">
+          {matches[idx]}
+        </mark>
+      );
+    }
+  });
+  return output;
+};
+
 const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSProperties; data: RowData }) => {
-  const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, isApp, isWrapping } = data;
+  const { logs, terminatedPods, selectedIndices, onRowClick, showTimestamp, isApp, isWrapping, searchQuery, activeMatchIndex } = data;
   const log = logs[index];
   
   if (!log) return <div style={style} />;
@@ -82,12 +140,15 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   const isTerminated = terminatedPods.includes(log.podName);
   const isSelected = selectedIndices.has(index);
   
+  const isMarker = log.kind === 'marker';
+  const isActiveMatch = activeMatchIndex === index;
+
   return (
     <div 
       style={style} 
       onClick={(e) => onRowClick(index, e)}
       className={`flex gap-3 md:gap-4 group hover:bg-white/5 px-2 items-start py-1 mono text-[10px] md:text-[11px] leading-tight overflow-hidden border-b border-white/[0.03] cursor-pointer select-none transition-colors ${
-        isSelected ? 'bg-sky-500/30 border-sky-500/50' : isTerminated ? 'opacity-40' : ''
+        isActiveMatch ? 'bg-sky-500/20 border-sky-500/40' : isSelected ? 'bg-sky-500/30 border-sky-500/50' : isTerminated ? 'opacity-40' : ''
       }`}
     >
       {showTimestamp && (
@@ -114,33 +175,40 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
             ? 'text-slate-600' 
             : log.level === 'ERROR' ? 'text-red-400' : log.level === 'WARNING' ? 'text-amber-400' : 'text-slate-400'
         }`}>
-          {log.level}
+          {isMarker ? 'MARK' : log.level}
         </span>
       </div>
       
-      <span className={`pt-0.5 ${isWrapping ? 'whitespace-normal break-all' : 'truncate'} ${isTerminated ? 'text-slate-500 italic' : 'text-slate-300'}`}>
-        {log.message}
+      <span className={`pt-0.5 ${isWrapping ? 'whitespace-normal break-all' : 'truncate'} ${isMarker ? 'text-sky-300 italic' : isTerminated ? 'text-slate-500 italic' : 'text-slate-300'}`}>
+        {highlightText(log.message, searchQuery)}
       </span>
     </div>
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
   
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [filter, setFilter] = useState<string>('');
-  const [selectedLevel, setSelectedLevel] = useState<LogLevel | 'ALL'>('ALL');
+  const [selectedLevel, setSelectedLevel] = useState<LogLevel | 'ALL'>(initialLogLevel ?? 'ALL');
   const [selectedPods, setSelectedPods] = useState<string[]>(initialPods);
   const [timeFilter, setTimeFilter] = useState<TimeFilterType>('all');
   const [isPodDropdownOpen, setIsPodDropdownOpen] = useState(false);
+  const [selectedContainer, setSelectedContainer] = useState<string>('');
   
   const [isAutoScroll, setIsAutoScroll] = useState(true);
   const [isWrapping, setIsWrapping] = useState(false);
   const [showTimestamp, setShowTimestamp] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [streamStatus, setStreamStatus] = useState<'connecting' | 'live' | 'reconnecting' | 'paused' | 'stale'>('connecting');
+  const [isPaused, setIsPaused] = useState(false);
+  const [droppedCount, setDroppedCount] = useState(0);
+  const [bufferedCount, setBufferedCount] = useState(0);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [activeMatchOffset, setActiveMatchOffset] = useState(0);
 
   const [selectedIndices, setSelectedIndices] = useState<Set<number>>(new Set());
   const [lastSelectedIndex, setLastSelectedIndex] = useState<number | null>(null);
@@ -168,15 +236,68 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     return initialPods.filter(p => p.includes('terminated'));
   }, [initialPods]);
 
+  const availableContainers = useMemo(() => {
+    if (isApp) {
+      return (resource as AppResource).containers?.map(c => c.name) ?? [];
+    }
+    return (resource as Pod).containers?.map(c => c.name) ?? [];
+  }, [resource, isApp]);
+
   const lastTimestampRef = useRef<string | null>(null);
   const streamAbortRef = useRef<AbortController | null>(null);
+  const lastEventAtRef = useRef<number | null>(null);
+  const isPausedRef = useRef(false);
+
+  useEffect(() => {
+    if (availableContainers.length > 0) {
+      setSelectedContainer(prev => prev || availableContainers[0]);
+    } else {
+      setSelectedContainer('');
+    }
+  }, [availableContainers]);
+
+  useEffect(() => {
+    setSelectedPods(initialPods);
+  }, [resource.name, resource.namespace]);
+
+  useEffect(() => {
+    if (initialLogLevel) {
+      setSelectedLevel(initialLogLevel);
+    }
+  }, [initialLogLevel, resource.name, resource.namespace]);
+
+  useEffect(() => {
+    if (onLogLevelChange) {
+      onLogLevelChange(selectedLevel);
+    }
+  }, [selectedLevel, onLogLevelChange]);
+
+  useEffect(() => {
+    isPausedRef.current = isPaused;
+  }, [isPaused]);
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (isPausedRef.current) return;
+      if (!lastEventAtRef.current) return;
+      const age = Date.now() - lastEventAtRef.current;
+      if (age > 30000) {
+        setStreamStatus('stale');
+      }
+    }, 5000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     let mounted = true;
 
     const fetchLogs = async () => {
       const podNames = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
-      const containers = !isApp ? (resource as Pod).containers.map(c => c.name) : ['main-app'];
+      const containers = selectedContainer
+        ? [selectedContainer]
+        : !isApp
+          ? (resource as Pod).containers.map(c => c.name)
+          : ['main-app'];
       const data = await getPodLogs(podNames[0], 500, containers, podNames);
       if (!mounted) return;
       setLogs(data);
@@ -191,6 +312,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     }
 
     if (!accessToken) {
+      setStreamStatus('live');
       setLoadError(null);
       fetchLogs().catch((err) => {
         if (!mounted) return;
@@ -200,7 +322,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       const interval = setInterval(async () => {
         try {
           const podNames = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
-          const containers = !isApp ? (resource as Pod).containers.map(c => c.name) : ['main-app'];
+          const containers = selectedContainer
+            ? [selectedContainer]
+            : !isApp
+              ? (resource as Pod).containers.map(c => c.name)
+              : ['main-app'];
           const newLogs = await getPodLogs(podNames[0], 5, containers, podNames);
           if (!mounted) return;
           setLogs(prev => [...prev.slice(-1500), ...newLogs]);
@@ -217,12 +343,24 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       };
     }
 
+    if (isPaused) {
+      setStreamStatus('paused');
+      if (streamAbortRef.current) {
+        streamAbortRef.current.abort();
+      }
+      return;
+    }
+
     const connectStream = async () => {
+      setStreamStatus('connecting');
       const basePath = isApp
         ? `/api/v1/namespaces/${resource.namespace}/apps/${resource.name}/logs`
         : `/api/v1/namespaces/${resource.namespace}/pods/${resource.name}/logs`;
       const url = new URL(basePath, window.location.origin);
       url.searchParams.set('tail', '500');
+      if (selectedContainer) {
+        url.searchParams.set('container', selectedContainer);
+      }
       if (lastTimestampRef.current) {
         url.searchParams.set('since', lastTimestampRef.current);
       }
@@ -261,21 +399,33 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
                 received = true;
                 setLoadError(null);
               }
-              lastTimestampRef.current = parsed.timestamp;
-              setLogs(prev => {
-                const next = [...prev, parsed];
-                return next.slice(-2000);
-              });
+              lastEventAtRef.current = Date.now();
+              setStreamStatus('live');
+              if (parsed.kind === 'log' || parsed.kind === 'marker') {
+                const entry = parsed.entry;
+                lastTimestampRef.current = entry.timestamp;
+                setLogs(prev => {
+                  const next = [...prev, entry];
+                  return next.slice(-2000);
+                });
+              } else if (parsed.kind === 'stats') {
+                setDroppedCount(parsed.stats.dropped);
+                setBufferedCount(parsed.stats.buffered);
+              }
             }
             splitIndex = buffer.indexOf('\n\n');
           }
         }
       } catch (err) {
         if (!mounted) return;
+        if (isPausedRef.current) {
+          return;
+        }
         const message = err instanceof Error ? err.message : 'Log stream disconnected';
         setLoadError(message);
+        setStreamStatus('reconnecting');
         await new Promise(resolve => setTimeout(resolve, 1500));
-        if (mounted) {
+        if (mounted && !isPausedRef.current) {
           connectStream();
         }
       }
@@ -289,7 +439,7 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
         streamAbortRef.current.abort();
       }
     };
-  }, [resource.name, resource.namespace, isApp, accessToken]);
+  }, [resource.name, resource.namespace, isApp, accessToken, selectedContainer, isPaused]);
 
   useEffect(() => {
     const handleClickOutside = (event: MouseEvent) => {
@@ -319,8 +469,10 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const filteredLogs = useMemo(() => {
     const now = new Date().getTime();
     return logs.filter(log => {
-      if (!selectedPods.includes(log.podName)) return false;
-      if (selectedLevel !== 'ALL' && log.level !== selectedLevel) return false;
+      if (log.kind !== 'marker') {
+        if (!selectedPods.includes(log.podName)) return false;
+        if (selectedLevel !== 'ALL' && log.level !== selectedLevel) return false;
+      }
       if (filter && !log.message.toLowerCase().includes(filter.toLowerCase())) return false;
       if (timeFilter !== 'all') {
         const logTime = new Date(log.timestamp).getTime();
@@ -331,6 +483,36 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       return true;
     });
   }, [logs, selectedPods, selectedLevel, filter, timeFilter]);
+
+  const matchIndices = useMemo(() => {
+    if (!searchQuery) return [];
+    const query = searchQuery.toLowerCase();
+    const indices: number[] = [];
+    filteredLogs.forEach((log, idx) => {
+      if (log.message.toLowerCase().includes(query)) {
+        indices.push(idx);
+      }
+    });
+    return indices;
+  }, [filteredLogs, searchQuery]);
+
+  useEffect(() => {
+    setActiveMatchOffset(0);
+  }, [searchQuery, filteredLogs]);
+
+  const activeMatchIndex = matchIndices.length > 0 ? matchIndices[Math.min(activeMatchOffset, matchIndices.length - 1)] : null;
+
+  const jumpToMatch = useCallback((direction: number) => {
+    if (matchIndices.length === 0) return;
+    setActiveMatchOffset(prev => {
+      const next = (prev + direction + matchIndices.length) % matchIndices.length;
+      const targetIndex = matchIndices[next];
+      if (listRef.current) {
+        listRef.current.scrollToItem(targetIndex, 'center');
+      }
+      return next;
+    });
+  }, [matchIndices]);
 
   useEffect(() => {
     setSelectedIndices(new Set());
@@ -393,16 +575,61 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     onRowClick: handleRowClick,
     showTimestamp,
     isApp,
-    isWrapping
+    isWrapping,
+    searchQuery,
+    activeMatchIndex
   };
 
+  const streamMeta = (() => {
+    switch (streamStatus) {
+      case 'live':
+        return { label: 'Live', color: 'bg-emerald-500', text: 'text-emerald-500' };
+      case 'reconnecting':
+        return { label: 'Reconnecting', color: 'bg-amber-500', text: 'text-amber-500' };
+      case 'paused':
+        return { label: 'Paused', color: 'bg-slate-500', text: 'text-slate-400' };
+      case 'stale':
+        return { label: 'Idle', color: 'bg-slate-500', text: 'text-slate-400' };
+      default:
+        return { label: 'Connecting', color: 'bg-sky-500', text: 'text-sky-500' };
+    }
+  })();
+
+  const handleTogglePause = useCallback(() => {
+    setIsPaused(prev => {
+      const next = !prev;
+      setStreamStatus(next ? 'paused' : 'connecting');
+      return next;
+    });
+  }, []);
+
+  const handleKeyDown = useCallback((event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (event.code !== 'Space') return;
+    const target = event.target as HTMLElement;
+    if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA')) {
+      return;
+    }
+    event.preventDefault();
+    handleTogglePause();
+  }, [handleTogglePause]);
+
   return (
-    <div className={`flex flex-col h-full bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-lg dark:shadow-2xl relative transition-colors duration-200 ${isMaximized ? 'col-span-full' : ''}`}>
+    <div
+      className={`flex flex-col h-full bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg overflow-hidden shadow-lg dark:shadow-2xl relative transition-colors duration-200 ${isMaximized ? 'col-span-full' : ''}`}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      onClick={(event) => (event.currentTarget as HTMLDivElement).focus()}
+    >
       <div className="bg-white dark:bg-slate-900 px-3 md:px-4 py-2 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between flex-wrap gap-2 md:gap-3 transition-colors duration-200">
         <div className="flex items-center gap-2 md:gap-3">
           <div className="flex items-center gap-1.5 md:gap-2 pr-2 md:pr-3 border-r border-slate-200 dark:border-slate-700">
             <span className="text-[10px] font-bold text-sky-600 dark:text-sky-500 px-1.5 py-0.5 bg-sky-500/10 rounded uppercase">{isApp ? 'App' : 'Pod'}</span>
             <h3 className="text-xs md:text-sm font-mono font-medium text-slate-700 dark:text-slate-200 truncate max-w-[100px] md:max-w-[140px]">{resource.name}</h3>
+          </div>
+
+          <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
+            <span className={`w-1.5 h-1.5 rounded-full ${streamMeta.color}`}></span>
+            <span className={`text-[9px] font-bold uppercase tracking-wide ${streamMeta.text}`}>{streamMeta.label}</span>
           </div>
           
           {isApp && (
@@ -456,6 +683,20 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               )}
             </div>
           )}
+
+          {availableContainers.length > 1 && (
+            <select
+              value={selectedContainer}
+              onChange={(e) => setSelectedContainer(e.target.value)}
+              className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] md:text-[10px] font-bold text-slate-600 dark:text-slate-300 rounded px-2 py-1"
+            >
+              {availableContainers.map((container) => (
+                <option key={container} value={container}>
+                  {container}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -482,6 +723,22 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               </button>
             ))}
           </div>
+
+          <button
+            onClick={handleTogglePause}
+            className="p-1 md:p-1.5 text-slate-400 hover:text-sky-500 transition-colors"
+            title={isPaused ? 'Resume stream (Space)' : 'Pause stream (Space)'}
+          >
+            {isPaused ? (
+              <svg className="w-4 md:w-5 h-4 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 4l14 8-14 8V4z" />
+              </svg>
+            ) : (
+              <svg className="w-4 md:w-5 h-4 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M10 4h4v16h-4zM4 4h4v16H4z" />
+              </svg>
+            )}
+          </button>
 
           <button 
             onClick={onClose}
@@ -570,6 +827,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
           <div className="text-[10px] text-slate-400 dark:text-slate-600 font-mono">
             {filteredLogs.length} entries
           </div>
+          {(droppedCount > 0 || bufferedCount > 0) && (
+            <div className="text-[10px] text-amber-500 font-mono">
+              Dropped {droppedCount} · Buffer {bufferedCount}
+            </div>
+          )}
         </div>
         
         <div className="flex items-center gap-3">
@@ -586,11 +848,44 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
           <div className="relative">
             <input 
               type="text" 
-              placeholder="Search..." 
+              placeholder="Filter..." 
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400 focus:ring-1 focus:ring-sky-500/50 w-24 md:w-32 text-right transition-all"
             />
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <input
+              type="text"
+              placeholder="Find..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-400 focus:ring-1 focus:ring-sky-500/50 w-20 md:w-28 text-right transition-all"
+            />
+            <button
+              onClick={() => jumpToMatch(-1)}
+              className="p-1 text-slate-400 hover:text-sky-500"
+              title="Previous match"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+              </svg>
+            </button>
+            <button
+              onClick={() => jumpToMatch(1)}
+              className="p-1 text-slate-400 hover:text-sky-500"
+              title="Next match"
+            >
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+              </svg>
+            </button>
+            {searchQuery && (
+              <span className="text-[9px] text-slate-400">
+                {matchIndices.length > 0 ? `${Math.min(activeMatchOffset + 1, matchIndices.length)}/${matchIndices.length}` : '0/0'}
+              </span>
+            )}
           </div>
         </div>
       </div>

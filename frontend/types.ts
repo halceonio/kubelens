@@ -8,6 +8,8 @@ export interface LogEntry {
   message: string;
   podName: string;
   containerName: string;
+  kind?: 'log' | 'marker';
+  markerKind?: string;
 }
 
 export interface Container {
@@ -63,7 +65,22 @@ export interface AppResource {
   volumes: VolumeMount[];
   secrets: string[];
   configMaps: string[];
+  containers?: Container[];
   image?: string; // Image tag used if version label is missing
+}
+
+export interface SavedView {
+  id: string;
+  name: string;
+  namespace?: string;
+  labelRegex?: string;
+  logLevel?: LogLevel | 'ALL';
+}
+
+export interface ViewFilters {
+  namespace?: string;
+  labelRegex?: string;
+  logLevel?: LogLevel | 'ALL';
 }
 
 export interface ResourceIdentifier {

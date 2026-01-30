@@ -175,6 +175,10 @@ export const getApps = async (namespace: string, token?: string | null): Promise
             memRequest: '768Mi',
             memLimit: '3Gi'
           },
+          containers: [
+            { name: 'main-app', image: 'enterprise/api:v2.1.0', ready: true, restartCount: 0 },
+            { name: 'istio-proxy', image: 'istio/proxyv2:1.15.0', ready: true, restartCount: 0 }
+          ],
           image: 'v2.1.0'
         },
         {
@@ -203,6 +207,9 @@ export const getApps = async (namespace: string, token?: string | null): Promise
             memRequest: '2Gi',
             memLimit: '4Gi'
           },
+          containers: [
+            { name: 'db', image: 'enterprise/db:v8.0.31', ready: true, restartCount: 0 }
+          ],
           image: 'v8.0.31'
         }
       ];

@@ -4,7 +4,7 @@ import Sidebar from './components/Sidebar';
 import LogView from './components/LogView';
 import PodInspector from './components/PodInspector';
 import AuthGuard from './components/AuthGuard';
-import { Pod, AppResource, ResourceIdentifier, AuthUser, UiConfig } from './types';
+import { Pod, AppResource, ResourceIdentifier, AuthUser, UiConfig, SavedView, ViewFilters, LogLevel } from './types';
 import { getPodByName, getAppByName } from './services/k8sService';
 import { fetchSession, saveSession, clearSession, SessionPayload } from './services/sessionService';
 import { fetchConfig } from './services/configService';
@@ -14,6 +14,9 @@ const STORAGE_KEY_ACTIVE = 'kubelens_active_resources';
 const STORAGE_KEY_PINNED = 'kubelens_pinned_resources';
 const STORAGE_KEY_THEME = 'kubelens_theme';
 const STORAGE_KEY_SIDEBAR = 'kubelens_sidebar_open';
+const STORAGE_KEY_SAVED_VIEWS = 'kubelens_saved_views';
+const STORAGE_KEY_VIEW_FILTERS = 'kubelens_view_filters';
+const STORAGE_KEY_ACTIVE_VIEW = 'kubelens_active_view';
 
 const getDefaultTheme = () => {
   const saved = localStorage.getItem(STORAGE_KEY_THEME);
@@ -35,6 +38,9 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [maxPanes, setMaxPanes] = useState(4);
   const [theme, setTheme] = useState<'light' | 'dark'>(getDefaultTheme);
+  const [savedViews, setSavedViews] = useState<SavedView[]>([]);
+  const [activeViewId, setActiveViewId] = useState<string | null>(null);
+  const [viewFilters, setViewFilters] = useState<ViewFilters>({ logLevel: 'ALL' });
 
   // Apply theme to document
   useEffect(() => {
@@ -180,6 +186,14 @@ const App: React.FC = () => {
   }, [isSidebarOpen, sessionToken]);
 
   useEffect(() => {
+    if (!sessionToken) {
+      localStorage.setItem(STORAGE_KEY_SAVED_VIEWS, JSON.stringify(savedViews));
+      localStorage.setItem(STORAGE_KEY_VIEW_FILTERS, JSON.stringify(viewFilters));
+      localStorage.setItem(STORAGE_KEY_ACTIVE_VIEW, activeViewId ?? '');
+    }
+  }, [savedViews, viewFilters, activeViewId, sessionToken]);
+
+  useEffect(() => {
     if (isRestoring || !sessionToken) return;
 
     const identifiers: ResourceIdentifier[] = activeResources.map(res => ({
@@ -192,13 +206,16 @@ const App: React.FC = () => {
       active_resources: identifiers,
       pinned_resources: pinnedResources,
       theme,
-      sidebar_open: isSidebarOpen
+      sidebar_open: isSidebarOpen,
+      saved_views: savedViews,
+      view_filters: viewFilters,
+      active_view_id: activeViewId
     };
 
     saveSession(sessionToken, payload).catch((err) => {
       console.warn('Failed to save session', err);
     });
-  }, [activeResources, pinnedResources, theme, isSidebarOpen, sessionToken, isRestoring]);
+  }, [activeResources, pinnedResources, theme, isSidebarOpen, savedViews, viewFilters, activeViewId, sessionToken, isRestoring]);
 
   // Restore state once session data is available
   useEffect(() => {
@@ -248,6 +265,15 @@ const App: React.FC = () => {
         if (typeof remoteSession.sidebar_open === 'boolean') {
           setIsSidebarOpen(remoteSession.sidebar_open);
         }
+        if (Array.isArray(remoteSession.saved_views)) {
+          setSavedViews(remoteSession.saved_views);
+        }
+        if (remoteSession.view_filters) {
+          setViewFilters({ logLevel: 'ALL', ...remoteSession.view_filters });
+        }
+        if (typeof remoteSession.active_view_id === 'string' || remoteSession.active_view_id === null) {
+          setActiveViewId(remoteSession.active_view_id ?? null);
+        }
       } else {
         const savedPinned = localStorage.getItem(STORAGE_KEY_PINNED);
         if (savedPinned) {
@@ -256,6 +282,26 @@ const App: React.FC = () => {
           } catch (e) {
             console.error("Failed to parse pinned resources", e);
           }
+        }
+        const savedViewsLocal = localStorage.getItem(STORAGE_KEY_SAVED_VIEWS);
+        if (savedViewsLocal) {
+          try {
+            setSavedViews(JSON.parse(savedViewsLocal));
+          } catch (e) {
+            console.error("Failed to parse saved views", e);
+          }
+        }
+        const savedFilters = localStorage.getItem(STORAGE_KEY_VIEW_FILTERS);
+        if (savedFilters) {
+          try {
+            setViewFilters({ logLevel: 'ALL', ...(JSON.parse(savedFilters)) });
+          } catch (e) {
+            console.error("Failed to parse view filters", e);
+          }
+        }
+        const savedActiveView = localStorage.getItem(STORAGE_KEY_ACTIVE_VIEW);
+        if (savedActiveView) {
+          setActiveViewId(savedActiveView || null);
         }
       }
 
@@ -320,6 +366,9 @@ const App: React.FC = () => {
     localStorage.removeItem(STORAGE_KEY_PINNED);
     localStorage.removeItem(STORAGE_KEY_SIDEBAR);
     localStorage.removeItem(STORAGE_KEY_THEME);
+    localStorage.removeItem(STORAGE_KEY_SAVED_VIEWS);
+    localStorage.removeItem(STORAGE_KEY_VIEW_FILTERS);
+    localStorage.removeItem(STORAGE_KEY_ACTIVE_VIEW);
     window.location.hash = '';
 
     setActiveResources([]);
@@ -328,7 +377,47 @@ const App: React.FC = () => {
     setTheme(getDefaultTheme());
     setIsSidebarOpen(true);
     setRemoteSession(null);
+    setSavedViews([]);
+    setViewFilters({ logLevel: 'ALL' });
+    setActiveViewId(null);
   }, [sessionToken]);
+
+  const handleSaveView = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setSavedViews(prev => {
+      const id = `${Date.now()}`;
+      const next: SavedView = {
+        id,
+        name: trimmed,
+        namespace: viewFilters.namespace,
+        labelRegex: viewFilters.labelRegex,
+        logLevel: viewFilters.logLevel ?? 'ALL'
+      };
+      return [...prev, next];
+    });
+  }, [viewFilters]);
+
+  const handleApplyView = useCallback((viewId: string | null) => {
+    setActiveViewId(viewId);
+    const view = savedViews.find(v => v.id === viewId);
+    if (!view) return;
+    setViewFilters({
+      namespace: view.namespace,
+      labelRegex: view.labelRegex,
+      logLevel: view.logLevel ?? 'ALL'
+    });
+  }, [savedViews]);
+
+  const handleLogLevelChange = useCallback((level: LogLevel | 'ALL') => {
+    setViewFilters(prev => ({ ...prev, logLevel: level }));
+    setActiveViewId(null);
+  }, []);
+
+  const handleUpdateViewFilters = useCallback((filters: ViewFilters) => {
+    setViewFilters(filters);
+    setActiveViewId(null);
+  }, []);
 
   // Determine visible resources based on current responsive limit
   const visibleResources = activeResources.slice(0, maxPanes);
@@ -346,6 +435,12 @@ const App: React.FC = () => {
           onTogglePin={togglePin}
           accessToken={sessionToken}
           config={uiConfig}
+          savedViews={savedViews}
+          activeViewId={activeViewId}
+          viewFilters={viewFilters}
+          onSaveView={handleSaveView}
+          onApplyView={handleApplyView}
+          onUpdateViewFilters={handleUpdateViewFilters}
         />
 
         <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -462,6 +557,8 @@ const App: React.FC = () => {
                     isMaximized={visibleResources.length === 1}
                     accessToken={sessionToken}
                     config={uiConfig}
+                    initialLogLevel={viewFilters.logLevel}
+                    onLogLevelChange={handleLogLevelChange}
                   />
                 </div>
               ))

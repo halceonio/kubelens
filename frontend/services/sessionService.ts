@@ -1,4 +1,4 @@
-import { ResourceIdentifier } from '../types';
+import { ResourceIdentifier, SavedView, ViewFilters } from '../types';
 
 export type ThemePreference = 'light' | 'dark';
 
@@ -9,6 +9,9 @@ export interface SessionPayload {
   pinned_resources?: ResourceIdentifier[];
   theme?: ThemePreference;
   sidebar_open?: boolean;
+  saved_views?: SavedView[];
+  view_filters?: ViewFilters;
+  active_view_id?: string | null;
 }
 
 const SESSION_ENDPOINT = '/api/v1/session';
