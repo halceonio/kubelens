@@ -58,6 +58,8 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [isAllAppsLoading, setIsAllAppsLoading] = useState(false);
   const [search, setSearch] = useState('');
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [saveViewName, setSaveViewName] = useState('');
 
   const isPinned = (type: 'pod' | 'app', namespace: string, name: string) => {
     return pinnedIds.some(id => id.type === type && id.namespace === namespace && id.name === name);
@@ -335,8 +337,8 @@ const Sidebar: React.FC<SidebarProps> = ({
               </select>
               <button
                 onClick={() => {
-                  const name = window.prompt('Save current view as:');
-                  if (name) onSaveView(name);
+                  setSaveViewName('');
+                  setIsSaveModalOpen(true);
                 }}
                 className="px-2 py-1 text-[10px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
               >
@@ -622,6 +624,57 @@ const Sidebar: React.FC<SidebarProps> = ({
           <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">srv-cluster-east / production</div>
         </div>
       </aside>
+
+      {isSaveModalOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-sm rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800">
+              <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Save current view</h3>
+              <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                Store the current namespace, label, and log level filters.
+              </p>
+            </div>
+            <div className="px-5 py-4">
+              <label className="text-[10px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wide">View name</label>
+              <input
+                autoFocus
+                value={saveViewName}
+                onChange={(e) => setSaveViewName(e.target.value)}
+                placeholder="e.g. Flipco errors"
+                className="mt-2 w-full rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 px-3 py-2 text-sm text-slate-700 dark:text-slate-200 focus:border-sky-500 focus:ring-1 focus:ring-sky-500/40"
+              />
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
+              <button
+                onClick={() => {
+                  setIsSaveModalOpen(false);
+                  setSaveViewName('');
+                }}
+                className="px-3 py-1.5 text-xs font-bold uppercase text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  const trimmed = saveViewName.trim();
+                  if (!trimmed) return;
+                  onSaveView(trimmed);
+                  setIsSaveModalOpen(false);
+                  setSaveViewName('');
+                }}
+                className={`px-4 py-1.5 text-xs font-bold uppercase rounded-md ${
+                  saveViewName.trim()
+                    ? 'bg-sky-500 text-white hover:bg-sky-400'
+                    : 'bg-slate-200 text-slate-400 dark:bg-slate-800 dark:text-slate-600 cursor-not-allowed'
+                }`}
+                disabled={!saveViewName.trim()}
+              >
+                Save view
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 };
