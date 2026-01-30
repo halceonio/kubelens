@@ -380,6 +380,9 @@ const Sidebar: React.FC<SidebarProps> = ({
                               <div className="flex flex-col items-start leading-tight overflow-hidden text-left">
                                 <span className="truncate font-medium w-full">{childLabel}</span>
                                 <div className="flex gap-1 mt-0.5 flex-wrap">
+                                  <span className="text-[7px] font-bold px-1 bg-slate-500/10 text-slate-500 border border-slate-500/20 rounded uppercase leading-none py-0.5">
+                                    {app.type}
+                                  </span>
                                   {env && (
                                     <span className="text-[7px] font-bold px-1 bg-sky-500/10 text-sky-500 border border-sky-500/20 rounded uppercase leading-none py-0.5">
                                       {env}
