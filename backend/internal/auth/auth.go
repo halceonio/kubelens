@@ -29,7 +29,8 @@ type User struct {
 }
 
 type Claims struct {
-	Groups []string `json:"groups"`
+	Groups          []string `json:"groups"`
+	AuthorizedParty string   `json:"azp"`
 	jwt.RegisteredClaims
 }
 
@@ -111,7 +112,6 @@ func (v *Verifier) AuthenticateRequest(r *http.Request) (*User, error) {
 	claims := &Claims{}
 	opts := []jwt.ParserOption{
 		jwt.WithIssuer(v.issuer),
-		jwt.WithAudience(v.audience),
 		jwt.WithExpirationRequired(),
 		jwt.WithLeeway(5 * time.Second),
 		jwt.WithValidMethods([]string{
@@ -130,6 +130,10 @@ func (v *Verifier) AuthenticateRequest(r *http.Request) (*User, error) {
 	}
 
 	if claims.Subject == "" {
+		return nil, ErrInvalidToken
+	}
+
+	if !audienceMatches(claims.Audience, claims.AuthorizedParty, v.audience) {
 		return nil, ErrInvalidToken
 	}
 
@@ -152,6 +156,18 @@ func (v *Verifier) hasAnyGroup(groups []string, allow map[string]struct{}) bool 
 		}
 	}
 	return false
+}
+
+func audienceMatches(aud jwt.ClaimStrings, azp string, expected string) bool {
+	if expected == "" {
+		return true
+	}
+	for _, audVal := range aud {
+		if audVal == expected {
+			return true
+		}
+	}
+	return azp == expected
 }
 
 func Middleware(v *Verifier) func(http.Handler) http.Handler {
