@@ -44,6 +44,7 @@ kubernetes:
     crd_list_ttl_seconds: 10
     retry_attempts: 3
     retry_base_delay_ms: 200
+    metadata_only: false
   allowed_namespaces:
     - "payment-svc"
     - "inventory-svc"

@@ -110,6 +110,7 @@ kubernetes:
     crd_list_ttl_seconds: 10
     retry_attempts: 3
     retry_base_delay_ms: 200
+    metadata_only: false
   allowed_namespaces:
     - "payment-svc"
     - "inventory-svc"
@@ -139,6 +140,8 @@ kubernetes:
 - For SSE log streaming, set `server.write_timeout_seconds: 0` to avoid premature disconnects.
 - Session persistence supports redis, sqlite, or postgres. With no storage configured, the in-memory store is used.
 - For local testing, `KUBELENS_KUBECONFIG` or `KUBECONFIG` can point to a kubeconfig file.
+- Set `kubernetes.api_cache.metadata_only: true` to return lightweight metadata lists (full details are fetched on demand).
+- Prometheus-style cache metrics are exposed at `GET /api/v1/metrics`.
 
 ## Documentation
 - `docs/index.md` entry point

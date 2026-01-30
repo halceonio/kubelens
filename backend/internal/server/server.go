@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 
 	"github.com/halceonio/kubelens/backend/internal/api"
 	"github.com/halceonio/kubelens/backend/internal/auth"
@@ -19,16 +20,18 @@ type Server struct {
 	cfg          atomic.Value
 	auth         auth.VerifierProvider
 	k8sClient    *kubernetes.Clientset
+	metaClient   metadata.Interface
 	sessionStore storage.SessionStore
 	kubeHandler  *dynamicHandler
 	kubeImpl     *api.KubeHandler
 	httpServer   *http.Server
 }
 
-func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.Clientset, sessions storage.SessionStore) *Server {
+func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.Clientset, meta metadata.Interface, sessions storage.SessionStore) *Server {
 	s := &Server{
 		auth:         verifier,
 		k8sClient:    client,
+		metaClient:   meta,
 		sessionStore: sessions,
 	}
 	s.cfg.Store(cfg)
@@ -51,8 +54,14 @@ func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.
 	mux.Handle("/api/v1/auth/token", authHandler)
 	mux.Handle("/api/v1/auth/config", authConfigHandler)
 	mux.Handle("/api/v1/config", auth.Middleware(verifier)(configHandler))
+	mux.Handle("/api/v1/metrics", api.MetricsHandler(func() *api.ResourceStats {
+		if s.kubeImpl == nil {
+			return nil
+		}
+		return s.kubeImpl.Stats()
+	}))
 
-	kubeImpl := api.NewKubeHandler(cfg, client)
+	kubeImpl := api.NewKubeHandler(cfg, client, meta)
 	kubeDynamic := newDynamicHandler(auth.Middleware(verifier)(kubeImpl))
 	mux.Handle("/api/v1/namespaces", kubeDynamic)
 	mux.Handle("/api/v1/namespaces/", kubeDynamic)
@@ -91,7 +100,7 @@ func (s *Server) UpdateConfig(cfg *config.Config) {
 		if s.kubeImpl != nil {
 			s.kubeImpl.Stop()
 		}
-		s.kubeImpl = api.NewKubeHandler(cfg, s.k8sClient)
+		s.kubeImpl = api.NewKubeHandler(cfg, s.k8sClient, s.metaClient)
 		s.kubeHandler.Update(auth.Middleware(s.auth)(s.kubeImpl))
 	}
 }

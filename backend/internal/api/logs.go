@@ -18,6 +18,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 
 	"github.com/halceonio/kubelens/backend/internal/config"
 )
@@ -32,11 +33,12 @@ type KubeHandler struct {
 	appStreams *appStreamPool
 	cache      *resourceCache
 	informers  *resourceInformers
-	stats      *resourceStats
+	stats      *ResourceStats
 	statsStop  chan struct{}
+	metaClient metadata.Interface
 }
 
-func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandler {
+func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metadata.Interface) *KubeHandler {
 	apiCache := cfg.Kubernetes.APICache
 	podTTL := time.Duration(apiCache.PodListTTLSeconds) * time.Second
 	appTTL := time.Duration(apiCache.AppListTTLSeconds) * time.Second
@@ -53,9 +55,10 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset) *KubeHandl
 		cache:      newResourceCache(podTTL, appTTL, crdTTL, apiCache.RetryAttempts, retryBase, stats),
 		stats:      stats,
 		statsStop:  make(chan struct{}),
+		metaClient: meta,
 	}
 	handler.appStreams = newAppStreamPool(handler)
-	if apiCache.EnableInformers != nil && *apiCache.EnableInformers && client != nil {
+	if !apiCache.MetadataOnly && apiCache.EnableInformers != nil && *apiCache.EnableInformers && client != nil {
 		resync := time.Duration(apiCache.InformerResyncSeconds) * time.Second
 		handler.informers = newResourceInformers(client, cfg.Kubernetes.AllowedNamespaces, resync)
 		handler.informers.Start()
@@ -74,6 +77,13 @@ func (h *KubeHandler) Stop() {
 	if h.informers != nil {
 		h.informers.Stop()
 	}
+}
+
+func (h *KubeHandler) Stats() *ResourceStats {
+	if h == nil {
+		return nil
+	}
+	return h.stats
 }
 
 func (h *KubeHandler) startStatsLogger() {

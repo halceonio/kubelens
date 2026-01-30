@@ -37,7 +37,7 @@ export interface ResourceUsage {
 export interface Pod {
   name: string;
   namespace: string;
-  status: 'Running' | 'Pending' | 'Failed' | 'Succeeded';
+  status: 'Running' | 'Pending' | 'Failed' | 'Succeeded' | 'Unknown';
   restarts: number;
   age: string;
   labels: Record<string, string>;
@@ -45,6 +45,7 @@ export interface Pod {
   env: Record<string, string>;
   envSecrets?: string[];
   light?: boolean;
+  metadataOnly?: boolean;
   containers: Container[];
   volumes: VolumeMount[];
   secrets: string[];
@@ -71,6 +72,7 @@ export interface AppResource {
   containers?: Container[];
   image?: string; // Image tag used if version label is missing
   light?: boolean;
+  metadataOnly?: boolean;
 }
 
 export interface SavedView {

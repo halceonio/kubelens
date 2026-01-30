@@ -580,7 +580,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                         apps[ns.name]
                           ?.filter(appMatchesSearch)
                           .filter(app => matchesLabelFilter(app.labels))
-                          .map((app) => (
+                          .map((app) => {
+                            const isMetaOnly = app.metadataOnly;
+                            const statusColor = isMetaOnly
+                              ? 'bg-slate-400 dark:bg-slate-500'
+                              : (app.readyReplicas === app.replicas && app.replicas > 0 ? 'bg-emerald-500' : 'bg-amber-500');
+                            return (
                           <div key={app.name} className="group relative">
                             <button
                               onClick={() => {
@@ -593,10 +598,12 @@ const Sidebar: React.FC<SidebarProps> = ({
                                   : 'text-slate-600 dark:text-slate-400 hover:bg-slate-50 dark:hover:bg-slate-800/80 hover:text-slate-900 dark:hover:text-slate-200 border-transparent'
                               }`}
                             >
-                              <span className={`w-2 h-2 rounded shrink-0 ${app.readyReplicas === app.replicas ? 'bg-emerald-500' : 'bg-amber-500'}`}></span>
+                              <span className={`w-2 h-2 rounded shrink-0 ${statusColor}`}></span>
                               <div className="flex flex-col items-start leading-tight overflow-hidden text-left">
                                 <span className="truncate font-medium w-full">{getAppDisplayName(app)}</span>
-                                <span className="text-[8px] text-slate-400 dark:text-slate-500 uppercase">{app.type} ({app.readyReplicas}/{app.replicas})</span>
+                                <span className="text-[8px] text-slate-400 dark:text-slate-500 uppercase">
+                                  {app.type} ({isMetaOnly ? '—' : `${app.readyReplicas}/${app.replicas}`})
+                                </span>
                               </div>
                             </button>
                             <button 
@@ -606,7 +613,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                               <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20"><path d="M5 4a2 2 0 012-2h6a2 2 0 012 2v.06a2 2 0 011.87 1.96v.3l-1.2 4.8a2 2 0 01-1.93 1.54H6.26a2 2 0 01-1.93-1.54L3.13 6.32v-.3a2 2 0 011.87-1.96V4zM5 13a1 1 0 011-1h8a1 1 0 110 2H6a1 1 0 01-1-1z" /></svg>
                             </button>
                           </div>
-                        ))
+                        )})
                       )
                     )}
                   </div>

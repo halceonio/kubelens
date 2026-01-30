@@ -16,6 +16,7 @@ import (
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/halceonio/kubelens/backend/internal/auth"
@@ -48,22 +49,23 @@ type volumeMountResponse struct {
 }
 
 type podResponse struct {
-	Name        string                `json:"name"`
-	Namespace   string                `json:"namespace"`
-	Status      string                `json:"status"`
-	Restarts    int32                 `json:"restarts"`
-	Age         string                `json:"age"`
-	Labels      map[string]string     `json:"labels"`
-	Annotations map[string]string     `json:"annotations"`
-	Env         map[string]string     `json:"env"`
-	EnvSecrets  []string              `json:"envSecrets"`
-	Containers  []containerResponse   `json:"containers"`
-	Volumes     []volumeMountResponse `json:"volumes"`
-	Secrets     []string              `json:"secrets"`
-	ConfigMaps  []string              `json:"configMaps"`
-	Resources   resourceUsage         `json:"resources"`
-	OwnerApp    string                `json:"ownerApp,omitempty"`
-	Light       bool                  `json:"light,omitempty"`
+	Name         string                `json:"name"`
+	Namespace    string                `json:"namespace"`
+	Status       string                `json:"status"`
+	Restarts     int32                 `json:"restarts"`
+	Age          string                `json:"age"`
+	Labels       map[string]string     `json:"labels"`
+	Annotations  map[string]string     `json:"annotations"`
+	Env          map[string]string     `json:"env"`
+	EnvSecrets   []string              `json:"envSecrets"`
+	Containers   []containerResponse   `json:"containers"`
+	Volumes      []volumeMountResponse `json:"volumes"`
+	Secrets      []string              `json:"secrets"`
+	ConfigMaps   []string              `json:"configMaps"`
+	Resources    resourceUsage         `json:"resources"`
+	OwnerApp     string                `json:"ownerApp,omitempty"`
+	Light        bool                  `json:"light,omitempty"`
+	MetadataOnly bool                  `json:"metadataOnly,omitempty"`
 }
 
 type appResponse struct {
@@ -84,6 +86,7 @@ type appResponse struct {
 	Containers    []containerResponse   `json:"containers,omitempty"`
 	Image         string                `json:"image,omitempty"`
 	Light         bool                  `json:"light,omitempty"`
+	MetadataOnly  bool                  `json:"metadataOnly,omitempty"`
 }
 
 const (
@@ -199,6 +202,23 @@ func (h *KubeHandler) handlePodsList(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 	light := wantsLight(r)
+	metadataOnly := light && h.cfg.Kubernetes.APICache.MetadataOnly && h.metaClient != nil
+	if metadataOnly {
+		items, err := h.listPodsMetadataCached(r.Context(), namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		resp := make([]podResponse, 0, len(items))
+		for _, pod := range items {
+			if !h.allowPod(&corev1.Pod{ObjectMeta: pod.ObjectMeta}) {
+				continue
+			}
+			resp = append(resp, h.mapPodMetadata(pod))
+		}
+		writeJSON(w, resp)
+		return
+	}
 	pods, err := h.listPodsCached(r.Context(), namespace)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err.Error())
@@ -269,6 +289,7 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 	ctx := r.Context()
 	resp := []appResponse{}
 	light := wantsLight(r)
+	metadataOnly := light && h.cfg.Kubernetes.APICache.MetadataOnly && h.metaClient != nil
 
 	var podSnapshot []corev1.Pod
 	if !light {
@@ -277,70 +298,129 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		}
 	}
 
-	deployments, err := h.listDeploymentsCached(ctx, namespace)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	for _, dep := range deployments {
-		if !h.allowApp(dep.Name, dep.Labels) {
-			continue
+	if metadataOnly {
+		deployments, err := h.listDeploymentsMetadataCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
 		}
-		if light {
-			resp = append(resp, h.mapDeploymentLite(&dep))
-		} else {
-			resp = append(resp, h.mapDeployment(ctx, &dep, nil, false, podSnapshot))
+		for _, dep := range deployments {
+			if !h.allowApp(dep.Name, dep.Labels) {
+				continue
+			}
+			resp = append(resp, h.mapDeploymentMetadata(dep))
 		}
-	}
-
-	statefulSets, err := h.listStatefulSetsCached(ctx, namespace)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	for _, sts := range statefulSets {
-		if hasOwnerKind(sts.OwnerReferences, dragonflyOwnerKind) {
-			continue
+	} else {
+		deployments, err := h.listDeploymentsCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
 		}
-		if !h.allowApp(sts.Name, sts.Labels) {
-			continue
-		}
-		if light {
-			resp = append(resp, h.mapStatefulSetLite(&sts))
-		} else {
-			resp = append(resp, h.mapStatefulSet(ctx, &sts, nil, false, podSnapshot))
+		for _, dep := range deployments {
+			if !h.allowApp(dep.Name, dep.Labels) {
+				continue
+			}
+			if light {
+				resp = append(resp, h.mapDeploymentLite(&dep))
+			} else {
+				resp = append(resp, h.mapDeployment(ctx, &dep, nil, false, podSnapshot))
+			}
 		}
 	}
 
-	cnpgClusters, err := h.listCnpgClustersCached(ctx, namespace)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	for _, cluster := range cnpgClusters {
-		if !h.allowApp(cluster.Metadata.Name, cluster.Metadata.Labels) {
-			continue
+	if metadataOnly {
+		statefulSets, err := h.listStatefulSetsMetadataCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
 		}
-		if light {
-			resp = append(resp, h.mapCnpgClusterLite(&cluster))
-		} else {
-			resp = append(resp, h.mapCnpgCluster(ctx, &cluster, podSnapshot))
+		for _, sts := range statefulSets {
+			if hasOwnerKind(sts.OwnerReferences, dragonflyOwnerKind) {
+				continue
+			}
+			if !h.allowApp(sts.Name, sts.Labels) {
+				continue
+			}
+			resp = append(resp, h.mapStatefulSetMetadata(sts))
+		}
+	} else {
+		statefulSets, err := h.listStatefulSetsCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		for _, sts := range statefulSets {
+			if hasOwnerKind(sts.OwnerReferences, dragonflyOwnerKind) {
+				continue
+			}
+			if !h.allowApp(sts.Name, sts.Labels) {
+				continue
+			}
+			if light {
+				resp = append(resp, h.mapStatefulSetLite(&sts))
+			} else {
+				resp = append(resp, h.mapStatefulSet(ctx, &sts, nil, false, podSnapshot))
+			}
 		}
 	}
 
-	dragonflies, err := h.listDragonfliesCached(ctx, namespace)
-	if err != nil {
-		writeError(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	for _, dragonfly := range dragonflies {
-		if !h.allowApp(dragonfly.Metadata.Name, dragonfly.Metadata.Labels) {
-			continue
+	if metadataOnly {
+		clusters, err := h.listCnpgMetadataCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
 		}
-		if light {
-			resp = append(resp, h.mapDragonflyLite(&dragonfly))
-		} else {
-			resp = append(resp, h.mapDragonfly(ctx, &dragonfly, nil, false, podSnapshot))
+		for _, cluster := range clusters {
+			if !h.allowApp(cluster.Name, cluster.Labels) {
+				continue
+			}
+			resp = append(resp, h.mapCnpgClusterMetadata(cluster))
+		}
+	} else {
+		cnpgClusters, err := h.listCnpgClustersCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		for _, cluster := range cnpgClusters {
+			if !h.allowApp(cluster.Metadata.Name, cluster.Metadata.Labels) {
+				continue
+			}
+			if light {
+				resp = append(resp, h.mapCnpgClusterLite(&cluster))
+			} else {
+				resp = append(resp, h.mapCnpgCluster(ctx, &cluster, podSnapshot))
+			}
+		}
+	}
+
+	if metadataOnly {
+		dragonflies, err := h.listDragonflyMetadataCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		for _, dragonfly := range dragonflies {
+			if !h.allowApp(dragonfly.Name, dragonfly.Labels) {
+				continue
+			}
+			resp = append(resp, h.mapDragonflyMetadata(dragonfly))
+		}
+	} else {
+		dragonflies, err := h.listDragonfliesCached(ctx, namespace)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		for _, dragonfly := range dragonflies {
+			if !h.allowApp(dragonfly.Metadata.Name, dragonfly.Metadata.Labels) {
+				continue
+			}
+			if light {
+				resp = append(resp, h.mapDragonflyLite(&dragonfly))
+			} else {
+				resp = append(resp, h.mapDragonfly(ctx, &dragonfly, nil, false, podSnapshot))
+			}
 		}
 	}
 
@@ -541,6 +621,28 @@ func (h *KubeHandler) mapPodLite(pod *corev1.Pod) podResponse {
 	}
 }
 
+func (h *KubeHandler) mapPodMetadata(meta metav1.PartialObjectMetadata) podResponse {
+	return podResponse{
+		Name:         meta.Name,
+		Namespace:    meta.Namespace,
+		Status:       "Unknown",
+		Restarts:     0,
+		Age:          formatAge(meta.CreationTimestamp.Time),
+		Labels:       meta.Labels,
+		Annotations:  meta.Annotations,
+		Env:          map[string]string{},
+		EnvSecrets:   []string{},
+		Containers:   []containerResponse{},
+		Volumes:      []volumeMountResponse{},
+		Secrets:      []string{},
+		ConfigMaps:   []string{},
+		Resources:    resourceUsage{},
+		OwnerApp:     ownerRefName(meta.OwnerReferences),
+		Light:        true,
+		MetadataOnly: true,
+	}
+}
+
 func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod) appResponse {
 	pods := h.podNamesForSelector(ctx, dep.Namespace, dep.Spec.Selector, podSnapshot)
 	requests, limits := sumResourceRequests(dep.Spec.Template.Spec.Containers)
@@ -603,6 +705,29 @@ func (h *KubeHandler) mapDeploymentLite(dep *appsv1.Deployment) appResponse {
 		Containers:    []containerResponse{},
 		Image:         image,
 		Light:         true,
+	}
+}
+
+func (h *KubeHandler) mapDeploymentMetadata(meta metav1.PartialObjectMetadata) appResponse {
+	return appResponse{
+		Name:          meta.Name,
+		Namespace:     meta.Namespace,
+		Type:          "Deployment",
+		Replicas:      0,
+		ReadyReplicas: 0,
+		PodNames:      []string{},
+		Labels:        meta.Labels,
+		Annotations:   meta.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Containers:    []containerResponse{},
+		Image:         "",
+		Light:         true,
+		MetadataOnly:  true,
 	}
 }
 
@@ -671,6 +796,29 @@ func (h *KubeHandler) mapStatefulSetLite(sts *appsv1.StatefulSet) appResponse {
 	}
 }
 
+func (h *KubeHandler) mapStatefulSetMetadata(meta metav1.PartialObjectMetadata) appResponse {
+	return appResponse{
+		Name:          meta.Name,
+		Namespace:     meta.Namespace,
+		Type:          "StatefulSet",
+		Replicas:      0,
+		ReadyReplicas: 0,
+		PodNames:      []string{},
+		Labels:        meta.Labels,
+		Annotations:   meta.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Containers:    []containerResponse{},
+		Image:         "",
+		Light:         true,
+		MetadataOnly:  true,
+	}
+}
+
 func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, podSnapshot []corev1.Pod) appResponse {
 	pods, _ := h.podNamesForLabel(ctx, cluster.Metadata.Namespace, fmt.Sprintf("%s=%s", cnpgClusterLabelKey, cluster.Metadata.Name), podSnapshot)
 	requests, limits := sumResourceRequirements(cluster.Spec.Resources)
@@ -730,6 +878,28 @@ func (h *KubeHandler) mapCnpgClusterLite(cluster *cnpgCluster) appResponse {
 	}
 }
 
+func (h *KubeHandler) mapCnpgClusterMetadata(meta metav1.PartialObjectMetadata) appResponse {
+	return appResponse{
+		Name:          meta.Name,
+		Namespace:     meta.Namespace,
+		Type:          "Cluster",
+		Replicas:      0,
+		ReadyReplicas: 0,
+		PodNames:      []string{},
+		Labels:        meta.Labels,
+		Annotations:   meta.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Image:         "",
+		Light:         true,
+		MetadataOnly:  true,
+	}
+}
+
 func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod) appResponse {
 	pods, ready := h.podNamesForLabel(ctx, dragonfly.Metadata.Namespace, fmt.Sprintf("%s=%s", dragonflyAppLabelKey, dragonfly.Metadata.Name), podSnapshot)
 	requests, limits := sumResourceRequirements(dragonfly.Spec.Resources)
@@ -786,6 +956,28 @@ func (h *KubeHandler) mapDragonflyLite(dragonfly *dragonflyResource) appResponse
 		ConfigMaps:    configRefs,
 		Image:         dragonfly.Spec.Image,
 		Light:         true,
+	}
+}
+
+func (h *KubeHandler) mapDragonflyMetadata(meta metav1.PartialObjectMetadata) appResponse {
+	return appResponse{
+		Name:          meta.Name,
+		Namespace:     meta.Namespace,
+		Type:          "Dragonfly",
+		Replicas:      0,
+		ReadyReplicas: 0,
+		PodNames:      []string{},
+		Labels:        meta.Labels,
+		Annotations:   meta.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Image:         "",
+		Light:         true,
+		MetadataOnly:  true,
 	}
 }
 
@@ -895,6 +1087,58 @@ func (h *KubeHandler) listPodsCached(ctx context.Context, namespace string) ([]c
 	return pods, nil
 }
 
+func (h *KubeHandler) listPodsMetadataCached(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	if h.cache != nil {
+		return h.cache.doMetaPods(namespace, func() ([]metav1.PartialObjectMetadata, error) {
+			if items, ok := h.cache.getMetaPods(namespace); ok {
+				if h.stats != nil {
+					h.stats.incPodsCacheHit()
+				}
+				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incPodsCacheMiss()
+			}
+			items, err := h.listPodsMetadata(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setMetaPods(namespace, items)
+			return items, nil
+		})
+	}
+	return h.listPodsMetadata(ctx, namespace)
+}
+
+func (h *KubeHandler) listPodsMetadata(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Version: "v1", Resource: "pods"}
+	var list *metav1.PartialObjectMetadataList
+	if h.stats != nil {
+		h.stats.incPodsAPICall()
+	}
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		list, err = h.metaClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
+	if err != nil {
+		if h.stats != nil {
+			h.stats.incPodsAPIErr()
+		}
+		return nil, err
+	}
+	if list == nil {
+		return []metav1.PartialObjectMetadata{}, nil
+	}
+	return list.Items, nil
+}
+
 func (h *KubeHandler) listPodsBySelectorCached(ctx context.Context, namespace, selector string) ([]corev1.Pod, error) {
 	if selector == "" {
 		return []corev1.Pod{}, nil
@@ -990,6 +1234,58 @@ func (h *KubeHandler) listDeploymentsCached(ctx context.Context, namespace strin
 	return deployments, nil
 }
 
+func (h *KubeHandler) listDeploymentsMetadataCached(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	if h.cache != nil {
+		return h.cache.doMetaDeployments(namespace, func() ([]metav1.PartialObjectMetadata, error) {
+			if items, ok := h.cache.getMetaDeployments(namespace); ok {
+				if h.stats != nil {
+					h.stats.incDepCacheHit()
+				}
+				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incDepCacheMiss()
+			}
+			items, err := h.listDeploymentsMetadata(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setMetaDeployments(namespace, items)
+			return items, nil
+		})
+	}
+	return h.listDeploymentsMetadata(ctx, namespace)
+}
+
+func (h *KubeHandler) listDeploymentsMetadata(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "deployments"}
+	var list *metav1.PartialObjectMetadataList
+	if h.stats != nil {
+		h.stats.incDepAPICall()
+	}
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		list, err = h.metaClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
+	if err != nil {
+		if h.stats != nil {
+			h.stats.incDepAPIErr()
+		}
+		return nil, err
+	}
+	if list == nil {
+		return []metav1.PartialObjectMetadata{}, nil
+	}
+	return list.Items, nil
+}
+
 func (h *KubeHandler) listStatefulSetsCached(ctx context.Context, namespace string) ([]appsv1.StatefulSet, error) {
 	if h.informers != nil {
 		if items, ok := h.informers.listStatefulSets(namespace); ok {
@@ -1025,6 +1321,58 @@ func (h *KubeHandler) listStatefulSetsCached(ctx context.Context, namespace stri
 	return sets, nil
 }
 
+func (h *KubeHandler) listStatefulSetsMetadataCached(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	if h.cache != nil {
+		return h.cache.doMetaStatefulSets(namespace, func() ([]metav1.PartialObjectMetadata, error) {
+			if items, ok := h.cache.getMetaStatefulSets(namespace); ok {
+				if h.stats != nil {
+					h.stats.incStsCacheHit()
+				}
+				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incStsCacheMiss()
+			}
+			items, err := h.listStatefulSetsMetadata(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setMetaStatefulSets(namespace, items)
+			return items, nil
+		})
+	}
+	return h.listStatefulSetsMetadata(ctx, namespace)
+}
+
+func (h *KubeHandler) listStatefulSetsMetadata(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Group: "apps", Version: "v1", Resource: "statefulsets"}
+	var list *metav1.PartialObjectMetadataList
+	if h.stats != nil {
+		h.stats.incStsAPICall()
+	}
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		list, err = h.metaClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
+	if err != nil {
+		if h.stats != nil {
+			h.stats.incStsAPIErr()
+		}
+		return nil, err
+	}
+	if list == nil {
+		return []metav1.PartialObjectMetadata{}, nil
+	}
+	return list.Items, nil
+}
+
 func (h *KubeHandler) listCnpgClustersCached(ctx context.Context, namespace string) ([]cnpgCluster, error) {
 	if h.cache != nil {
 		return h.cache.doCnpg(namespace, func() ([]cnpgCluster, error) {
@@ -1052,6 +1400,61 @@ func (h *KubeHandler) listCnpgClustersCached(ctx context.Context, namespace stri
 	return clusters, nil
 }
 
+func (h *KubeHandler) listCnpgMetadataCached(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	if h.cache != nil {
+		return h.cache.doMetaCnpg(namespace, func() ([]metav1.PartialObjectMetadata, error) {
+			if items, ok := h.cache.getMetaCnpg(namespace); ok {
+				if h.stats != nil {
+					h.stats.incCnpgCacheHit()
+				}
+				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incCnpgCacheMiss()
+			}
+			items, err := h.listCnpgMetadata(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setMetaCnpg(namespace, items)
+			return items, nil
+		})
+	}
+	return h.listCnpgMetadata(ctx, namespace)
+}
+
+func (h *KubeHandler) listCnpgMetadata(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Group: "postgresql.cnpg.io", Version: "v1", Resource: "clusters"}
+	var list *metav1.PartialObjectMetadataList
+	if h.stats != nil {
+		h.stats.incCnpgAPICall()
+	}
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		list, err = h.metaClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return []metav1.PartialObjectMetadata{}, nil
+		}
+		if h.stats != nil {
+			h.stats.incCnpgAPIErr()
+		}
+		return nil, err
+	}
+	if list == nil {
+		return []metav1.PartialObjectMetadata{}, nil
+	}
+	return list.Items, nil
+}
+
 func (h *KubeHandler) listDragonfliesCached(ctx context.Context, namespace string) ([]dragonflyResource, error) {
 	if h.cache != nil {
 		return h.cache.doDragonfly(namespace, func() ([]dragonflyResource, error) {
@@ -1077,6 +1480,61 @@ func (h *KubeHandler) listDragonfliesCached(ctx context.Context, namespace strin
 		return nil, err
 	}
 	return dragonflies, nil
+}
+
+func (h *KubeHandler) listDragonflyMetadataCached(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	if h.cache != nil {
+		return h.cache.doMetaDragonfly(namespace, func() ([]metav1.PartialObjectMetadata, error) {
+			if items, ok := h.cache.getMetaDragonfly(namespace); ok {
+				if h.stats != nil {
+					h.stats.incDragonCacheHit()
+				}
+				return items, nil
+			}
+			if h.stats != nil {
+				h.stats.incDragonCacheMiss()
+			}
+			items, err := h.listDragonflyMetadata(ctx, namespace)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setMetaDragonfly(namespace, items)
+			return items, nil
+		})
+	}
+	return h.listDragonflyMetadata(ctx, namespace)
+}
+
+func (h *KubeHandler) listDragonflyMetadata(ctx context.Context, namespace string) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Group: "dragonflydb.io", Version: "v1alpha1", Resource: "dragonflies"}
+	var list *metav1.PartialObjectMetadataList
+	if h.stats != nil {
+		h.stats.incDragonAPICall()
+	}
+	err := retryK8s(ctx, h.cache, func(ctx context.Context) error {
+		var err error
+		list, err = h.metaClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+		return err
+	})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return []metav1.PartialObjectMetadata{}, nil
+		}
+		if h.stats != nil {
+			h.stats.incDragonAPIErr()
+		}
+		return nil, err
+	}
+	if list == nil {
+		return []metav1.PartialObjectMetadata{}, nil
+	}
+	return list.Items, nil
 }
 
 func (h *KubeHandler) podNamesForSelector(ctx context.Context, namespace string, selector *metav1.LabelSelector, podSnapshot []corev1.Pod) []string {

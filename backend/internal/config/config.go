@@ -83,6 +83,7 @@ type KubernetesCache struct {
 	CRDListTTLSeconds     int   `yaml:"crd_list_ttl_seconds"`
 	RetryAttempts         int   `yaml:"retry_attempts"`
 	RetryBaseDelayMillis  int   `yaml:"retry_base_delay_ms"`
+	MetadataOnly          bool  `yaml:"metadata_only"`
 }
 
 type AppGroupsConfig struct {

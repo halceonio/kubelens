@@ -24,6 +24,20 @@ logs:
 ```
 This controls how often app log streams re-check pod membership to pick up new replicas or rolling updates.
 
+## API cache modes
+The API cache supports an optional metadata-only list mode to reduce API server load:
+```yaml
+kubernetes:
+  api_cache:
+    metadata_only: true
+```
+When enabled, list endpoints return `metadataOnly: true` resources with minimal fields, and the UI fetches full resource details on demand.
+
+Cache metrics are exposed at:
+```
+GET /api/v1/metrics
+```
+
 ## SSE timeouts
 Log streaming uses long-lived SSE connections. Set:
 ```yaml
@@ -70,6 +84,7 @@ kubernetes:
     crd_list_ttl_seconds: 10
     retry_attempts: 3
     retry_base_delay_ms: 200
+    metadata_only: false
   allowed_namespaces:
     - "apps"
     - "db"

@@ -38,7 +38,7 @@ func main() {
 	}
 	dynamicVerifier := auth.NewDynamicVerifier(verifier)
 
-	k8sClient, err := k8s.NewClient(cfg.Kubernetes)
+	k8sClient, metaClient, err := k8s.NewClients(cfg.Kubernetes)
 	if err != nil {
 		logger.Fatalf("k8s client error: %v", err)
 	}
@@ -49,7 +49,7 @@ func main() {
 	}
 	logger.Printf("session store: %s", backend)
 
-	srv := server.New(cfg, dynamicVerifier, k8sClient, sessionStore)
+	srv := server.New(cfg, dynamicVerifier, k8sClient, metaClient, sessionStore)
 
 	go watchConfig(ctx, logger, path, func(updated *config.Config) {
 		newVerifier, err := auth.NewVerifier(ctx, updated.Auth)

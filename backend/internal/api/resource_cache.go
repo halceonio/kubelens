@@ -21,26 +21,36 @@ type cacheEntry[T any] struct {
 }
 
 type resourceCache struct {
-	mu          sync.RWMutex
-	podTTL      time.Duration
-	appTTL      time.Duration
-	crdTTL      time.Duration
-	retryCount  int
-	retryBase   time.Duration
-	stats       *resourceStats
-	pods        map[string]cacheEntry[corev1.Pod]
-	deployments map[string]cacheEntry[appsv1.Deployment]
-	statefuls   map[string]cacheEntry[appsv1.StatefulSet]
-	cnpg        map[string]cacheEntry[cnpgCluster]
-	dragonfly   map[string]cacheEntry[dragonflyResource]
-	podGroup    singleflight.Group
-	depGroup    singleflight.Group
-	stsGroup    singleflight.Group
-	cnpgGroup   singleflight.Group
-	dfGroup     singleflight.Group
+	mu            sync.RWMutex
+	podTTL        time.Duration
+	appTTL        time.Duration
+	crdTTL        time.Duration
+	retryCount    int
+	retryBase     time.Duration
+	stats         *ResourceStats
+	pods          map[string]cacheEntry[corev1.Pod]
+	deployments   map[string]cacheEntry[appsv1.Deployment]
+	statefuls     map[string]cacheEntry[appsv1.StatefulSet]
+	cnpg          map[string]cacheEntry[cnpgCluster]
+	dragonfly     map[string]cacheEntry[dragonflyResource]
+	metaPods      map[string]cacheEntry[metav1.PartialObjectMetadata]
+	metaDeps      map[string]cacheEntry[metav1.PartialObjectMetadata]
+	metaSts       map[string]cacheEntry[metav1.PartialObjectMetadata]
+	metaCnpg      map[string]cacheEntry[metav1.PartialObjectMetadata]
+	metaDragon    map[string]cacheEntry[metav1.PartialObjectMetadata]
+	podGroup      singleflight.Group
+	depGroup      singleflight.Group
+	stsGroup      singleflight.Group
+	cnpgGroup     singleflight.Group
+	dfGroup       singleflight.Group
+	metaPodGroup  singleflight.Group
+	metaDepGroup  singleflight.Group
+	metaStsGroup  singleflight.Group
+	metaCnpgGroup singleflight.Group
+	metaDfGroup   singleflight.Group
 }
 
-func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration, stats *resourceStats) *resourceCache {
+func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration, stats *ResourceStats) *resourceCache {
 	return &resourceCache{
 		podTTL:      podTTL,
 		appTTL:      appTTL,
@@ -53,6 +63,11 @@ func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retr
 		statefuls:   map[string]cacheEntry[appsv1.StatefulSet]{},
 		cnpg:        map[string]cacheEntry[cnpgCluster]{},
 		dragonfly:   map[string]cacheEntry[dragonflyResource]{},
+		metaPods:    map[string]cacheEntry[metav1.PartialObjectMetadata]{},
+		metaDeps:    map[string]cacheEntry[metav1.PartialObjectMetadata]{},
+		metaSts:     map[string]cacheEntry[metav1.PartialObjectMetadata]{},
+		metaCnpg:    map[string]cacheEntry[metav1.PartialObjectMetadata]{},
+		metaDragon:  map[string]cacheEntry[metav1.PartialObjectMetadata]{},
 	}
 }
 
@@ -94,6 +109,46 @@ func (c *resourceCache) getDragonfly(namespace string) ([]dragonflyResource, boo
 
 func (c *resourceCache) setDragonfly(namespace string, items []dragonflyResource) {
 	setCache(c, c.dragonfly, namespace, items)
+}
+
+func (c *resourceCache) getMetaPods(namespace string) ([]metav1.PartialObjectMetadata, bool) {
+	return getCache(c, c.metaPods, namespace, c.podTTL)
+}
+
+func (c *resourceCache) setMetaPods(namespace string, items []metav1.PartialObjectMetadata) {
+	setCache(c, c.metaPods, namespace, items)
+}
+
+func (c *resourceCache) getMetaDeployments(namespace string) ([]metav1.PartialObjectMetadata, bool) {
+	return getCache(c, c.metaDeps, namespace, c.appTTL)
+}
+
+func (c *resourceCache) setMetaDeployments(namespace string, items []metav1.PartialObjectMetadata) {
+	setCache(c, c.metaDeps, namespace, items)
+}
+
+func (c *resourceCache) getMetaStatefulSets(namespace string) ([]metav1.PartialObjectMetadata, bool) {
+	return getCache(c, c.metaSts, namespace, c.appTTL)
+}
+
+func (c *resourceCache) setMetaStatefulSets(namespace string, items []metav1.PartialObjectMetadata) {
+	setCache(c, c.metaSts, namespace, items)
+}
+
+func (c *resourceCache) getMetaCnpg(namespace string) ([]metav1.PartialObjectMetadata, bool) {
+	return getCache(c, c.metaCnpg, namespace, c.crdTTL)
+}
+
+func (c *resourceCache) setMetaCnpg(namespace string, items []metav1.PartialObjectMetadata) {
+	setCache(c, c.metaCnpg, namespace, items)
+}
+
+func (c *resourceCache) getMetaDragonfly(namespace string) ([]metav1.PartialObjectMetadata, bool) {
+	return getCache(c, c.metaDragon, namespace, c.crdTTL)
+}
+
+func (c *resourceCache) setMetaDragonfly(namespace string, items []metav1.PartialObjectMetadata) {
+	setCache(c, c.metaDragon, namespace, items)
 }
 
 func getCache[T any](cache *resourceCache, store map[string]cacheEntry[T], namespace string, ttl time.Duration) ([]T, bool) {
@@ -167,6 +222,61 @@ func (c *resourceCache) doDragonfly(namespace string, fn func() ([]dragonflyReso
 		return nil, err
 	}
 	items, _ := v.([]dragonflyResource)
+	return items, nil
+}
+
+func (c *resourceCache) doMetaPods(namespace string, fn func() ([]metav1.PartialObjectMetadata, error)) ([]metav1.PartialObjectMetadata, error) {
+	v, err, _ := c.metaPodGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]metav1.PartialObjectMetadata)
+	return items, nil
+}
+
+func (c *resourceCache) doMetaDeployments(namespace string, fn func() ([]metav1.PartialObjectMetadata, error)) ([]metav1.PartialObjectMetadata, error) {
+	v, err, _ := c.metaDepGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]metav1.PartialObjectMetadata)
+	return items, nil
+}
+
+func (c *resourceCache) doMetaStatefulSets(namespace string, fn func() ([]metav1.PartialObjectMetadata, error)) ([]metav1.PartialObjectMetadata, error) {
+	v, err, _ := c.metaStsGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]metav1.PartialObjectMetadata)
+	return items, nil
+}
+
+func (c *resourceCache) doMetaCnpg(namespace string, fn func() ([]metav1.PartialObjectMetadata, error)) ([]metav1.PartialObjectMetadata, error) {
+	v, err, _ := c.metaCnpgGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]metav1.PartialObjectMetadata)
+	return items, nil
+}
+
+func (c *resourceCache) doMetaDragonfly(namespace string, fn func() ([]metav1.PartialObjectMetadata, error)) ([]metav1.PartialObjectMetadata, error) {
+	v, err, _ := c.metaDfGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]metav1.PartialObjectMetadata)
 	return items, nil
 }
 

@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/metadata"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 
@@ -12,9 +13,14 @@ import (
 )
 
 func NewClient(cfg config.KubernetesConfig) (*kubernetes.Clientset, error) {
+	clientset, _, err := NewClients(cfg)
+	return clientset, err
+}
+
+func NewClients(cfg config.KubernetesConfig) (*kubernetes.Clientset, metadata.Interface, error) {
 	restCfg, err := loadConfig()
 	if err != nil {
-		return nil, fmt.Errorf("k8s config: %w", err)
+		return nil, nil, fmt.Errorf("k8s config: %w", err)
 	}
 	if cfg.API.QPS > 0 {
 		restCfg.QPS = cfg.API.QPS
@@ -25,9 +31,13 @@ func NewClient(cfg config.KubernetesConfig) (*kubernetes.Clientset, error) {
 
 	clientset, err := kubernetes.NewForConfig(restCfg)
 	if err != nil {
-		return nil, fmt.Errorf("k8s clientset: %w", err)
+		return nil, nil, fmt.Errorf("k8s clientset: %w", err)
 	}
-	return clientset, nil
+	metaClient, err := metadata.NewForConfig(restCfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("k8s metadata client: %w", err)
+	}
+	return clientset, metaClient, nil
 }
 
 func loadConfig() (*rest.Config, error) {
