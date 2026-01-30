@@ -12,6 +12,7 @@ type ConfigResponse struct {
 }
 
 type KubernetesResponse struct {
+	ClusterName       string            `json:"cluster_name"`
 	AllowedNamespaces []string          `json:"allowed_namespaces"`
 	LabelPrefix       string            `json:"label_prefix"`
 	AppGroups         AppGroupsResponse `json:"app_groups"`
@@ -50,6 +51,7 @@ func NewConfigHandler(getConfig func() *config.Config) http.HandlerFunc {
 
 		resp := ConfigResponse{
 			Kubernetes: KubernetesResponse{
+				ClusterName:       cfg.Kubernetes.ClusterName,
 				AllowedNamespaces: cfg.Kubernetes.AllowedNamespaces,
 				LabelPrefix:       cfg.Kubernetes.LabelPrefix,
 				AppGroups: AppGroupsResponse{

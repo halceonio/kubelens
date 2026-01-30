@@ -105,6 +105,7 @@ export interface AppGroupConfig {
 
 export interface UiConfig {
   kubernetes: {
+    cluster_name?: string;
     allowed_namespaces: string[];
     label_prefix: string;
     app_groups: AppGroupConfig;

@@ -621,7 +621,9 @@ const Sidebar: React.FC<SidebarProps> = ({
             <span className="text-slate-400 dark:text-slate-500 uppercase tracking-widest font-bold">Session</span>
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></span>
           </div>
-          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">srv-cluster-east / production</div>
+          <div className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+            {effectiveConfig.kubernetes.cluster_name || 'cluster'}
+          </div>
         </div>
       </aside>
 

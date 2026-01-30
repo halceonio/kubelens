@@ -15,6 +15,7 @@ export const MOCK_CONFIG = {
   keycloakUrl: 'https://sso.enterprise.com',
   realm: 'production',
   clientId: 'kubelens-client',
+  clusterName: 'srv-cluster-east',
   allowedNamespaces: ['ai-system', 'apps', 'api', 'db', 'internal-apps'],
   podFilterRegex: '.*',
   label_prefix: 'app.sgz.ai',
@@ -31,6 +32,7 @@ export const MOCK_CONFIG = {
 
 export const DEFAULT_UI_CONFIG = {
   kubernetes: {
+    cluster_name: MOCK_CONFIG.clusterName,
     allowed_namespaces: MOCK_CONFIG.allowedNamespaces,
     label_prefix: MOCK_CONFIG.label_prefix,
     app_groups: MOCK_CONFIG.appGroups
