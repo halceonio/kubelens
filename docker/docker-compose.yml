@@ -1,0 +1,27 @@
+version: "3.9"
+
+services:
+  kubelens:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    image: halceon/kubelens
+    ports:
+      - "8080:80"
+    environment:
+      KUBELENS_CONFIG: /etc/kubelens/config.yaml
+      KUBECONFIG: /etc/kubeconfig
+    volumes:
+      - ./config.yaml:/etc/kubelens/config.yaml:ro
+      - ./kubeconfig:/etc/kubeconfig:ro
+      - kubelens-data:/var/lib/kubelens
+    depends_on:
+      - redis
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+
+volumes:
+  kubelens-data:

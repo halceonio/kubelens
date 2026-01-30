@@ -15,6 +15,7 @@ In many enterprise environments, giving full `kubectl` access or complex IDE per
 ### 🔍 Deep Resource Inspection
 *   **Pod Inspector**: View environment variables, secrets, configmaps, and resource limits (CPU/Memory) in a clean, tabbed interface.
 *   **Real-time Metrics**: Visual progress bars for resource allocation (Request vs. Limit).
+*   **App Catalog**: Supports Deployments, StatefulSets, CNPG Clusters, and Dragonfly CRDs.
 
 ### 📂 App Groups & Navigation
 *   **App Grouping**: Group resources by custom enterprise labels (e.g., `app.logging.k8s.io/group`) instead of just namespaces. Optional label keys can provide display names per app.
@@ -24,9 +25,10 @@ In many enterprise environments, giving full `kubectl` access or complex IDE per
 ### 🔐 Enterprise Security
 *   **Keycloak Integration**: SSO-ready authentication.
 *   **RBAC Enforcement**: Hard requirement for the `k8s-logs-access` group membership to enter the app.
+*   **Session Persistence**: User preferences and pinned resources are stored server-side (redis/sqlite/postgres).
 
 ## 🛠️ Configuration
-KubeLens is configured via a central configuration schema (mocked in `constants.tsx` and defined in `types.ts`):
+KubeLens is configured via a central YAML configuration file (see `backend/config.example.yaml`):
 
 ```yaml
 kubernetes:
@@ -40,9 +42,9 @@ kubernetes:
 ```
 
 ## 🏗️ Technical Architecture
-*   **Frontend**: React 18.3.1 (downgraded for stable virtualization compatibility).
-*   **Styling**: Tailwind CSS with a custom manual Light/Dark mode toggle.
-*   **Virtualization**: `react-window` for high-performance log rendering.
+*   **Frontend**: React 18.3.1 + Vite, Tailwind CSS, `react-window` for virtualization.
+*   **Backend**: Go service that proxies Kubernetes API calls, streams logs via SSE, and enforces auth/filters.
+*   **Runtime**: Nginx + supervisor run frontend + backend in a single pod.
 *   **Persistence**: Session state is stored via the backend per user, with URL fragments and localStorage used as fallbacks.
 
 ## 🎨 Design Philosophy
