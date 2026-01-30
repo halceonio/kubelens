@@ -14,12 +14,15 @@ The container runs:
 
 ## Required config
 Mount your config file and kubeconfig:
+
 - `/etc/kubelens/config.yaml`
 - `/etc/kubeconfig`
 
 Environment variables:
-- `KUBELENS_CONFIG=/etc/kubelens/config.yaml`
-- `KUBECONFIG=/etc/kubeconfig`
+```bash
+KUBELENS_CONFIG=/etc/kubelens/config.yaml
+KUBECONFIG=/etc/kubeconfig
+```
 
 ## Example (docker compose)
 ```bash
@@ -30,4 +33,3 @@ docker compose -f docker/docker-compose.yml up --build
 - Run the container as a single pod behind a Service.
 - Mount the config file via ConfigMap and the kubeconfig via Secret.
 - Keep the pod read-only: no cluster write permissions.
-

@@ -86,6 +86,11 @@
   box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
 }
 
+.md-typeset pre code,
+.md-typeset pre code span {
+  color: var(--md-code-fg-color);
+}
+
 [data-md-color-scheme="slate"] .md-typeset pre {
   border-color: rgba(51, 65, 85, 0.6);
   box-shadow: 0 12px 28px rgba(2, 6, 23, 0.6);
