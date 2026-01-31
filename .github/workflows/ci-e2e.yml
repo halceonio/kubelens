@@ -11,6 +11,16 @@ jobs:
       E2E_USERNAME: tester
       E2E_PASSWORD: tester
       E2E_BASE_URL: http://localhost:3000
+    services:
+      keycloak:
+        image: quay.io/keycloak/keycloak:25.0.6
+        ports:
+          - 8081:8080
+        env:
+          KEYCLOAK_ADMIN: admin
+          KEYCLOAK_ADMIN_PASSWORD: admin
+          KC_HOSTNAME_STRICT: "false"
+          KC_HEALTH_ENABLED: "true"
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -41,18 +51,8 @@ jobs:
       - name: Install jq
         run: sudo apt-get update && sudo apt-get install -y jq
 
-      - name: Start Keycloak
+      - name: Wait for Keycloak
         run: |
-          docker run -d --name keycloak \
-            -p 8081:8080 \
-            -e KEYCLOAK_ADMIN=admin \
-            -e KEYCLOAK_ADMIN_PASSWORD=admin \
-            -e KC_HOSTNAME_STRICT=false \
-            -e KC_HEALTH_ENABLED=true \
-            -v "${{ github.workspace }}/tests/keycloak/realm.json:/opt/keycloak/data/import/realm.json" \
-            quay.io/keycloak/keycloak:25.0.6 \
-            start-dev --import-realm
-
           for i in {1..60}; do
             if curl -fsS http://localhost:8081/health/ready > /dev/null; then
               echo "Keycloak is ready";
@@ -60,6 +60,16 @@ jobs:
             fi
             sleep 2
           done
+
+      - name: Import Keycloak realm
+        run: |
+          docker cp tests/keycloak/realm.json keycloak:/tmp/realm.json
+          docker exec keycloak /opt/keycloak/bin/kcadm.sh config credentials \
+            --server http://localhost:8080 \
+            --realm master \
+            --user admin \
+            --password admin
+          docker exec keycloak /opt/keycloak/bin/kcadm.sh create realms -f /tmp/realm.json
 
       - name: Backend tests
         run: |
