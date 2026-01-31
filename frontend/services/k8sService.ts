@@ -17,6 +17,17 @@ const fetchJSON = async <T>(url: string, token?: string | null): Promise<T> => {
   return res.json();
 };
 
+const buildQuery = (params: Record<string, string | undefined>) => {
+  const search = new URLSearchParams();
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== '') {
+      search.set(key, value);
+    }
+  });
+  const query = search.toString();
+  return query ? `?${query}` : '';
+};
+
 const withRevealSecrets = (url: string, reveal?: boolean) => {
   if (!reveal) return url;
   const joiner = url.includes('?') ? '&' : '?';
@@ -70,7 +81,7 @@ export const getNamespaces = async (token?: string | null): Promise<Namespace[]>
 export const getPods = async (
   namespace: string,
   token?: string | null,
-  opts?: { light?: boolean }
+  opts?: { light?: boolean; metrics?: boolean }
 ): Promise<Pod[]> => {
   if (!token && !USE_MOCKS) {
     throw new Error('Missing access token');
@@ -78,8 +89,12 @@ export const getPods = async (
 
   if (token) {
     try {
-      const light = opts?.light ?? true;
-      const url = `${API_BASE}/namespaces/${namespace}/pods${light ? '?light=true' : ''}`;
+      const includeMetrics = Boolean(opts?.metrics);
+      const light = includeMetrics ? false : (opts?.light ?? true);
+      const url = `${API_BASE}/namespaces/${namespace}/pods${buildQuery({
+        light: light ? 'true' : undefined,
+        metrics: includeMetrics ? 'true' : undefined
+      })}`;
       return await fetchJSON<Pod[]>(url, token);
     } catch (err) {
       console.warn('Failed to load pods from backend', err);
@@ -129,11 +144,14 @@ export const getPodByName = async (
   namespace: string,
   name: string,
   token?: string | null,
-  opts?: { revealSecrets?: boolean }
+  opts?: { revealSecrets?: boolean; metrics?: boolean }
 ): Promise<Pod | null> => {
   if (token) {
     try {
-      const url = withRevealSecrets(`${API_BASE}/namespaces/${namespace}/pods/${name}`, opts?.revealSecrets);
+      const url = withRevealSecrets(
+        `${API_BASE}/namespaces/${namespace}/pods/${name}${buildQuery({ metrics: opts?.metrics ? 'true' : undefined })}`,
+        opts?.revealSecrets
+      );
       return await fetchJSON<Pod>(url, token);
     } catch (err) {
       console.warn('Failed to load pod from backend', err);
@@ -146,7 +164,7 @@ export const getPodByName = async (
 export const getApps = async (
   namespace: string,
   token?: string | null,
-  opts?: { light?: boolean }
+  opts?: { light?: boolean; metrics?: boolean }
 ): Promise<AppResource[]> => {
   if (!token && !USE_MOCKS) {
     throw new Error('Missing access token');
@@ -154,8 +172,12 @@ export const getApps = async (
 
   if (token) {
     try {
-      const light = opts?.light ?? true;
-      const url = `${API_BASE}/namespaces/${namespace}/apps${light ? '?light=true' : ''}`;
+      const includeMetrics = Boolean(opts?.metrics);
+      const light = includeMetrics ? false : (opts?.light ?? true);
+      const url = `${API_BASE}/namespaces/${namespace}/apps${buildQuery({
+        light: light ? 'true' : undefined,
+        metrics: includeMetrics ? 'true' : undefined
+      })}`;
       return await fetchJSON<AppResource[]>(url, token);
     } catch (err) {
       console.warn('Failed to load apps from backend', err);
@@ -249,11 +271,14 @@ export const getAppByName = async (
   namespace: string,
   name: string,
   token?: string | null,
-  opts?: { revealSecrets?: boolean }
+  opts?: { revealSecrets?: boolean; metrics?: boolean }
 ): Promise<AppResource | null> => {
   if (token) {
     try {
-      const url = withRevealSecrets(`${API_BASE}/namespaces/${namespace}/apps/${name}`, opts?.revealSecrets);
+      const url = withRevealSecrets(
+        `${API_BASE}/namespaces/${namespace}/apps/${name}${buildQuery({ metrics: opts?.metrics ? 'true' : undefined })}`,
+        opts?.revealSecrets
+      );
       return await fetchJSON<AppResource>(url, token);
     } catch (err) {
       console.warn('Failed to load app from backend', err);

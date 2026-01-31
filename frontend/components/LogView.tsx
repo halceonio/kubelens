@@ -970,10 +970,10 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
           {isApp && globalShowMetrics && (
             <div className="hidden sm:flex items-center gap-2 text-[9px] font-bold text-slate-500 dark:text-slate-400">
               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                CPU {resource.resources?.cpuUsage || '0'} / {resource.resources?.cpuLimit || resource.resources?.cpuRequest || '--'}
+                CPU {resource.resources?.cpuUsage || '—'} / {resource.resources?.cpuLimit || resource.resources?.cpuRequest || '--'}
               </span>
               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
-                MEM {resource.resources?.memUsage || '0'} / {resource.resources?.memLimit || resource.resources?.memRequest || '--'}
+                MEM {resource.resources?.memUsage || '—'} / {resource.resources?.memLimit || resource.resources?.memRequest || '--'}
               </span>
             </div>
           )}

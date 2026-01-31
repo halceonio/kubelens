@@ -39,6 +39,7 @@ type resourceCache struct {
 	metaCnpg        map[string]cacheEntry[metav1.PartialObjectMetadata]
 	metaDragon      map[string]cacheEntry[metav1.PartialObjectMetadata]
 	metaCustom      map[string]cacheEntry[metav1.PartialObjectMetadata]
+	podMetrics      map[string]cacheEntry[podMetricItem]
 	podGroup        singleflight.Group
 	depGroup        singleflight.Group
 	stsGroup        singleflight.Group
@@ -50,6 +51,7 @@ type resourceCache struct {
 	metaCnpgGroup   singleflight.Group
 	metaDfGroup     singleflight.Group
 	metaCustomGroup singleflight.Group
+	podMetricsGroup singleflight.Group
 }
 
 func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration, stats *ResourceStats) *resourceCache {
@@ -71,6 +73,7 @@ func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retr
 		metaCnpg:    map[string]cacheEntry[metav1.PartialObjectMetadata]{},
 		metaDragon:  map[string]cacheEntry[metav1.PartialObjectMetadata]{},
 		metaCustom:  map[string]cacheEntry[metav1.PartialObjectMetadata]{},
+		podMetrics:  map[string]cacheEntry[podMetricItem]{},
 	}
 }
 
@@ -160,6 +163,14 @@ func (c *resourceCache) getMetaCustom(key string) ([]metav1.PartialObjectMetadat
 
 func (c *resourceCache) setMetaCustom(key string, items []metav1.PartialObjectMetadata) {
 	setCache(c, c.metaCustom, key, items)
+}
+
+func (c *resourceCache) getPodMetrics(namespace string) ([]podMetricItem, bool) {
+	return getCache(c, c.podMetrics, namespace, c.podTTL)
+}
+
+func (c *resourceCache) setPodMetrics(namespace string, items []podMetricItem) {
+	setCache(c, c.podMetrics, namespace, items)
 }
 
 func getCache[T any](cache *resourceCache, store map[string]cacheEntry[T], namespace string, ttl time.Duration) ([]T, bool) {
@@ -299,6 +310,17 @@ func (c *resourceCache) doMetaCustom(key string, fn func() ([]metav1.PartialObje
 		return nil, err
 	}
 	items, _ := v.([]metav1.PartialObjectMetadata)
+	return items, nil
+}
+
+func (c *resourceCache) doPodMetrics(namespace string, fn func() ([]podMetricItem, error)) ([]podMetricItem, error) {
+	v, err, _ := c.podMetricsGroup.Do(namespace, func() (any, error) {
+		return fn()
+	})
+	if err != nil {
+		return nil, err
+	}
+	items, _ := v.([]podMetricItem)
 	return items, nil
 }
 

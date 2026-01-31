@@ -24,6 +24,9 @@ logs:
 ```
 This controls how often app log streams re-check pod membership to pick up new replicas or rolling updates.
 
+## Resource metrics (CPU/Memory)
+KubeLens fetches live usage from the Kubernetes Metrics API (`metrics.k8s.io`). Ensure `metrics-server` is installed in the cluster. The frontend requests metrics on demand via the `metrics=true` query parameter. When metrics are unavailable, usage fields render as `—`.
+
 ## Shared log workers (Redis Streams)
 KubeLens can pool log streams across multiple backend replicas using Redis Streams:
 ```yaml

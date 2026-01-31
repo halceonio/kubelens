@@ -51,6 +51,7 @@ const App: React.FC = () => {
   });
   const [isActionsOpen, setIsActionsOpen] = useState(false);
   const actionsRef = useRef<HTMLDivElement | null>(null);
+  const activeResourcesRef = useRef<(Pod | AppResource)[]>([]);
 
   // Apply theme to document
   useEffect(() => {
@@ -219,6 +220,10 @@ const App: React.FC = () => {
     document.addEventListener('mousedown', handleClickOutside);
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
+
+  useEffect(() => {
+    activeResourcesRef.current = activeResources;
+  }, [activeResources]);
 
   useEffect(() => {
     if (isRestoring || !sessionToken) return;
@@ -393,7 +398,7 @@ const App: React.FC = () => {
     restore();
   }, [sessionReady, sessionToken, remoteSession]);
 
-  const ensureResourceDetails = useCallback(async (resource: Pod | AppResource) => {
+  const ensureResourceDetails = useCallback(async (resource: Pod | AppResource, includeMetrics?: boolean) => {
     if (!sessionToken) return resource;
     const isApp = 'type' in resource;
     const needsDetails = resource.light || (isApp ? (resource as AppResource).podNames?.length === 0 : (resource as Pod).containers?.length === 0);
@@ -401,8 +406,8 @@ const App: React.FC = () => {
 
     try {
       const detailed = isApp
-        ? await getAppByName(resource.namespace, resource.name, sessionToken)
-        : await getPodByName(resource.namespace, resource.name, sessionToken);
+        ? await getAppByName(resource.namespace, resource.name, sessionToken, { metrics: includeMetrics })
+        : await getPodByName(resource.namespace, resource.name, sessionToken, { metrics: includeMetrics });
       return detailed || resource;
     } catch (err) {
       console.warn('Failed to load resource details', err);
@@ -412,7 +417,7 @@ const App: React.FC = () => {
 
   const handleResourceSelect = useCallback((resource: Pod | AppResource) => {
     void (async () => {
-      const detailed = await ensureResourceDetails(resource);
+      const detailed = await ensureResourceDetails(resource, logViewPrefs.show_metrics);
       setActiveResources(prev => {
         if (prev.some(p => p.name === detailed.name)) {
           // Move selected resource to front so it's visible in restricted grid
@@ -425,7 +430,35 @@ const App: React.FC = () => {
         return [detailed, ...prev];
       });
     })();
-  }, [ensureResourceDetails]);
+  }, [ensureResourceDetails, logViewPrefs.show_metrics]);
+
+  useEffect(() => {
+    if (!sessionToken || !logViewPrefs.show_metrics) return;
+    let cancelled = false;
+    const refresh = async () => {
+      const current = activeResourcesRef.current;
+      if (current.length === 0) return;
+      const updated: (Pod | AppResource)[] = [];
+      for (const res of current) {
+        const isApp = 'type' in res;
+        try {
+          const detailed = isApp
+            ? await getAppByName(res.namespace, res.name, sessionToken, { metrics: true })
+            : await getPodByName(res.namespace, res.name, sessionToken, { metrics: true });
+          updated.push(detailed || res);
+        } catch {
+          updated.push(res);
+        }
+      }
+      if (!cancelled) {
+        setActiveResources(updated);
+      }
+    };
+    refresh();
+    return () => {
+      cancelled = true;
+    };
+  }, [logViewPrefs.show_metrics, sessionToken]);
 
   const closeResource = useCallback((name: string) => {
     setActiveResources(prev => prev.filter(p => p.name !== name));
