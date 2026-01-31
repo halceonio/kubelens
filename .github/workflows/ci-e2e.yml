@@ -3,6 +3,7 @@ name: ci-e2e
 on:
   pull_request:
   workflow_dispatch:
+  workflow_call:
 
 jobs:
   e2e:

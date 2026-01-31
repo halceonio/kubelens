@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py docs-preview docs-build release-tag
+.PHONY: help backend-build backend-run backend-tidy frontend-install frontend-dev frontend-build frontend-preview dev kill-dev kube-sa keycloak-token keycloak-device-token keycloak-device-token-py docs-preview docs-build release-tag release
 
 DEV_CONFIG ?= backend/config.test.yaml
 DEV_KUBECONFIG ?= refs/kubelens-test.kubeconfig
@@ -75,6 +75,13 @@ release-tag: ## Create and push a git tag (VERSION required, e.g. v0.0.1)
 	fi
 	git tag -a "$(VERSION)" -m "Release $(VERSION)"
 	git push origin "$(VERSION)"
+
+release: ## Trigger release (runs ci-e2e before publishing)
+	@if [ -z "$(VERSION)" ]; then \
+		echo "Usage: make release VERSION=v0.0.1"; \
+		exit 1; \
+	fi
+	$(MAKE) release-tag VERSION=$(VERSION)
 
 
 .PHONY: docker-build
