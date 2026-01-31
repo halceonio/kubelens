@@ -114,6 +114,9 @@ type LogStreamStats struct {
 	BufferedLinesTotal int
 	BufferBytesTotal   int
 	Leaders            int
+	ReconnectsTotal    int64
+	LagMsMax           int64
+	LagMsAvg           int64
 }
 
 func newLogStreamHub(handler *KubeHandler) *logStreamHub {
@@ -213,6 +216,8 @@ func (h *logStreamHub) Stats() LogStreamStats {
 	h.mu.Unlock()
 
 	stats := LogStreamStats{}
+	lagTotal := int64(0)
+	lagCount := int64(0)
 	for _, stream := range streams {
 		snap := stream.snapshotStats()
 		stats.ActiveStreams++
@@ -223,6 +228,15 @@ func (h *logStreamHub) Stats() LogStreamStats {
 		if snap.leader {
 			stats.Leaders++
 		}
+		stats.ReconnectsTotal += snap.reconnects
+		if snap.lagMs > stats.LagMsMax {
+			stats.LagMsMax = snap.lagMs
+		}
+		lagTotal += snap.lagMs
+		lagCount++
+	}
+	if lagCount > 0 {
+		stats.LagMsAvg = lagTotal / lagCount
 	}
 	return stats
 }
@@ -688,6 +702,8 @@ type streamSnapshot struct {
 	bufferedLines int
 	bufferBytes   int
 	leader        bool
+	reconnects    int64
+	lagMs         int64
 }
 
 func (s *logStream) snapshotStats() streamSnapshot {
@@ -699,12 +715,20 @@ func (s *logStream) snapshotStats() streamSnapshot {
 	}
 	s.mu.Unlock()
 	lines, bytes := s.buffer.snapshot()
+	last := s.lastEventAt.Load()
+	lagMs := int64(0)
+	if last > 0 {
+		lastTime := time.Unix(0, last).UTC()
+		lagMs = time.Since(lastTime).Milliseconds()
+	}
 	return streamSnapshot{
 		subscribers:   subs,
 		dropped:       dropped,
 		bufferedLines: lines,
 		bufferBytes:   bytes,
 		leader:        s.leader,
+		reconnects:    s.reconnects.Load(),
+		lagMs:         lagMs,
 	}
 }
 

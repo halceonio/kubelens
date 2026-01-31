@@ -175,6 +175,13 @@ func (c *resourceCache) setPodMetrics(namespace string, items []podMetricItem) {
 	setCache(c, c.podMetrics, namespace, items)
 }
 
+func (c *resourceCache) getPodMetricsEntry(namespace string) (cacheEntry[podMetricItem], bool) {
+	c.mu.RLock()
+	entry, ok := c.podMetrics[namespace]
+	c.mu.RUnlock()
+	return entry, ok
+}
+
 func getCache[T any](cache *resourceCache, store map[string]cacheEntry[T], namespace string, ttl time.Duration) ([]T, bool) {
 	cache.mu.RLock()
 	entry, ok := store[namespace]

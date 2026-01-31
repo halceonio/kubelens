@@ -82,6 +82,15 @@ func Validate(cfg *Config) ValidationResult {
 	if cfg.Logs.RateLimitPerMinute > 0 && cfg.Logs.RateLimitBurst == 0 {
 		warns = append(warns, "logs.rate_limit_burst is 0; using rate_limit_per_minute as burst is recommended")
 	}
+	for i, override := range cfg.Logs.RateLimitOverrides {
+		prefix := fmt.Sprintf("logs.rate_limit_overrides[%d]", i)
+		if override.Namespace == "" {
+			errs = append(errs, fmt.Sprintf("%s namespace is required", prefix))
+		}
+		if override.RateLimitPerMinute < 0 || override.RateLimitBurst < 0 {
+			errs = append(errs, fmt.Sprintf("%s rate_limit_per_minute and rate_limit_burst must be >= 0", prefix))
+		}
+	}
 
 	if cfg.Auth.ClientSecret == "" {
 		warns = append(warns, "auth.client_secret is empty (public client)")
@@ -89,6 +98,19 @@ func Validate(cfg *Config) ValidationResult {
 
 	if strings.TrimSpace(cfg.Server.Address) == "" {
 		errs = append(errs, "server.address is required")
+	}
+
+	if cfg.Kubernetes.APICache.MetricsListTTLSeconds < 0 {
+		errs = append(errs, "kubernetes.api_cache.metrics_list_ttl_seconds must be >= 0")
+	}
+	if cfg.Kubernetes.APICache.MetricsRefreshSeconds < 0 {
+		errs = append(errs, "kubernetes.api_cache.metrics_refresh_seconds must be >= 0")
+	}
+	if cfg.Kubernetes.APICache.MetricsRefreshJitter < 0 {
+		errs = append(errs, "kubernetes.api_cache.metrics_refresh_jitter_seconds must be >= 0")
+	}
+	if cfg.Kubernetes.APICache.MetricsStaleSeconds < 0 {
+		errs = append(errs, "kubernetes.api_cache.metrics_stale_seconds must be >= 0")
 	}
 
 	return ValidationResult{Errors: errs, Warnings: warns}

@@ -32,6 +32,10 @@ logs:
   redis_url: ""
   rate_limit_per_minute: 120
   rate_limit_burst: 240
+  rate_limit_overrides:
+    - namespace: "internal-apps"
+      rate_limit_per_minute: 240
+      rate_limit_burst: 480
 
 session:
   max_bytes: 262144
@@ -56,6 +60,10 @@ kubernetes:
     app_list_ttl_seconds: 5
     crd_list_ttl_seconds: 10
     metrics_list_ttl_seconds: 5
+    metrics_refresh_seconds: 15
+    metrics_refresh_jitter_seconds: 5
+    metrics_stale_seconds: 30
+    warm_on_startup: false
     retry_attempts: 3
     retry_base_delay_ms: 200
     metadata_only: false
@@ -89,6 +97,7 @@ kubernetes:
       kind: "Cluster"
       enabled: true
       pod_label_key: "cnpg.io/cluster"
+      selector_path: "spec.selector"
     - name: "dragonfly"
       group: "dragonflydb.io"
       version: "v1alpha1"
@@ -96,3 +105,4 @@ kubernetes:
       kind: "Dragonfly"
       enabled: true
       pod_label_key: "app"
+      selector_path: "spec.selector"

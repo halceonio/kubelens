@@ -40,22 +40,23 @@ type AuthConfig struct {
 }
 
 type LogsConfig struct {
-	DefaultTailLines       int    `yaml:"default_tail_lines"`
-	MaxTailLines           int    `yaml:"max_tail_lines"`
-	MaxLineLength          int    `yaml:"max_line_length"`
-	AppStreamResync        int    `yaml:"app_stream_resync_seconds"`
-	WorkerIdleTTLSeconds   int    `yaml:"worker_idle_ttl_seconds"`
-	WorkerBufferLines      int    `yaml:"worker_buffer_lines"`
-	WorkerBufferMaxBytes   int    `yaml:"worker_buffer_max_bytes"`
-	SubscriberBufferLines  int    `yaml:"subscriber_buffer_lines"`
-	UseRedisStreams        bool   `yaml:"use_redis_streams"`
-	RedisStreamPrefix      string `yaml:"redis_stream_prefix"`
-	RedisStreamMaxLen      int    `yaml:"redis_stream_maxlen"`
-	RedisStreamBlockMillis int    `yaml:"redis_stream_block_millis"`
-	RedisLockTTLSeconds    int    `yaml:"redis_lock_ttl_seconds"`
-	RedisURLOverride       string `yaml:"redis_url"`
-	RateLimitPerMinute     int    `yaml:"rate_limit_per_minute"`
-	RateLimitBurst         int    `yaml:"rate_limit_burst"`
+	DefaultTailLines       int                 `yaml:"default_tail_lines"`
+	MaxTailLines           int                 `yaml:"max_tail_lines"`
+	MaxLineLength          int                 `yaml:"max_line_length"`
+	AppStreamResync        int                 `yaml:"app_stream_resync_seconds"`
+	WorkerIdleTTLSeconds   int                 `yaml:"worker_idle_ttl_seconds"`
+	WorkerBufferLines      int                 `yaml:"worker_buffer_lines"`
+	WorkerBufferMaxBytes   int                 `yaml:"worker_buffer_max_bytes"`
+	SubscriberBufferLines  int                 `yaml:"subscriber_buffer_lines"`
+	UseRedisStreams        bool                `yaml:"use_redis_streams"`
+	RedisStreamPrefix      string              `yaml:"redis_stream_prefix"`
+	RedisStreamMaxLen      int                 `yaml:"redis_stream_maxlen"`
+	RedisStreamBlockMillis int                 `yaml:"redis_stream_block_millis"`
+	RedisLockTTLSeconds    int                 `yaml:"redis_lock_ttl_seconds"`
+	RedisURLOverride       string              `yaml:"redis_url"`
+	RateLimitPerMinute     int                 `yaml:"rate_limit_per_minute"`
+	RateLimitBurst         int                 `yaml:"rate_limit_burst"`
+	RateLimitOverrides     []RateLimitOverride `yaml:"rate_limit_overrides"`
 }
 
 type SessionConfig struct {
@@ -85,13 +86,14 @@ type KubernetesConfig struct {
 }
 
 type CustomResourceConfig struct {
-	Name        string `yaml:"name"`
-	Group       string `yaml:"group"`
-	Version     string `yaml:"version"`
-	Resource    string `yaml:"resource"`
-	Kind        string `yaml:"kind"`
-	Enabled     bool   `yaml:"enabled"`
-	PodLabelKey string `yaml:"pod_label_key"`
+	Name         string `yaml:"name"`
+	Group        string `yaml:"group"`
+	Version      string `yaml:"version"`
+	Resource     string `yaml:"resource"`
+	Kind         string `yaml:"kind"`
+	Enabled      bool   `yaml:"enabled"`
+	PodLabelKey  string `yaml:"pod_label_key"`
+	SelectorPath string `yaml:"selector_path"`
 }
 
 type KubernetesAPI struct {
@@ -106,9 +108,19 @@ type KubernetesCache struct {
 	AppListTTLSeconds     int   `yaml:"app_list_ttl_seconds"`
 	CRDListTTLSeconds     int   `yaml:"crd_list_ttl_seconds"`
 	MetricsListTTLSeconds int   `yaml:"metrics_list_ttl_seconds"`
+	MetricsRefreshSeconds int   `yaml:"metrics_refresh_seconds"`
+	MetricsRefreshJitter  int   `yaml:"metrics_refresh_jitter_seconds"`
+	MetricsStaleSeconds   int   `yaml:"metrics_stale_seconds"`
+	WarmOnStartup         bool  `yaml:"warm_on_startup"`
 	RetryAttempts         int   `yaml:"retry_attempts"`
 	RetryBaseDelayMillis  int   `yaml:"retry_base_delay_ms"`
 	MetadataOnly          bool  `yaml:"metadata_only"`
+}
+
+type RateLimitOverride struct {
+	Namespace          string `yaml:"namespace"`
+	RateLimitPerMinute int    `yaml:"rate_limit_per_minute"`
+	RateLimitBurst     int    `yaml:"rate_limit_burst"`
 }
 
 type AppGroupsConfig struct {
@@ -233,6 +245,15 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Kubernetes.APICache.MetricsListTTLSeconds == 0 {
 		cfg.Kubernetes.APICache.MetricsListTTLSeconds = 5
+	}
+	if cfg.Kubernetes.APICache.MetricsRefreshSeconds == 0 {
+		cfg.Kubernetes.APICache.MetricsRefreshSeconds = 15
+	}
+	if cfg.Kubernetes.APICache.MetricsRefreshJitter == 0 {
+		cfg.Kubernetes.APICache.MetricsRefreshJitter = 5
+	}
+	if cfg.Kubernetes.APICache.MetricsStaleSeconds == 0 {
+		cfg.Kubernetes.APICache.MetricsStaleSeconds = 30
 	}
 	if cfg.Kubernetes.APICache.InformerResyncSeconds == 0 {
 		cfg.Kubernetes.APICache.InformerResyncSeconds = 30

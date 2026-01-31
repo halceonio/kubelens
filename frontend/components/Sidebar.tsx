@@ -420,7 +420,24 @@ const Sidebar: React.FC<SidebarProps> = ({
               </select>
             </div>
 
-            {(viewFilters.namespace || viewFilters.labelRegex || viewFilters.logLevel !== 'ALL' || viewFilters.group) && (
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                placeholder="Log include regex"
+                value={viewFilters.logIncludeRegex || ''}
+                onChange={(e) => onUpdateViewFilters({ ...viewFilters, logIncludeRegex: e.target.value })}
+                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-300"
+              />
+              <input
+                type="text"
+                placeholder="Log exclude regex"
+                value={viewFilters.logExcludeRegex || ''}
+                onChange={(e) => onUpdateViewFilters({ ...viewFilters, logExcludeRegex: e.target.value })}
+                className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-300"
+              />
+            </div>
+
+            {(viewFilters.namespace || viewFilters.labelRegex || viewFilters.logLevel !== 'ALL' || viewFilters.group || viewFilters.logIncludeRegex || viewFilters.logExcludeRegex) && (
               <div className="flex flex-wrap gap-2 pt-1">
                 {viewFilters.namespace && (
                   <button
@@ -444,6 +461,22 @@ const Sidebar: React.FC<SidebarProps> = ({
                     className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
                   >
                     Label: {viewFilters.labelRegex} ✕
+                  </button>
+                )}
+                {viewFilters.logIncludeRegex && (
+                  <button
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, logIncludeRegex: undefined })}
+                    className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    Log +: {viewFilters.logIncludeRegex} ✕
+                  </button>
+                )}
+                {viewFilters.logExcludeRegex && (
+                  <button
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, logExcludeRegex: undefined })}
+                    className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    Log -: {viewFilters.logExcludeRegex} ✕
                   </button>
                 )}
                 {viewFilters.logLevel && viewFilters.logLevel !== 'ALL' && (

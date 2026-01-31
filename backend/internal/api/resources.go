@@ -28,18 +28,62 @@ type namespaceResponse struct {
 }
 
 type resourceUsage struct {
-	CPUUsage   string `json:"cpuUsage"`
-	CPURequest string `json:"cpuRequest"`
-	CPULimit   string `json:"cpuLimit"`
-	MemUsage   string `json:"memUsage"`
-	MemRequest string `json:"memRequest"`
-	MemLimit   string `json:"memLimit"`
+	CPUUsage          string `json:"cpuUsage"`
+	CPURequest        string `json:"cpuRequest"`
+	CPULimit          string `json:"cpuLimit"`
+	MemUsage          string `json:"memUsage"`
+	MemRequest        string `json:"memRequest"`
+	MemLimit          string `json:"memLimit"`
+	MetricsAgeSeconds int    `json:"metricsAgeSeconds,omitempty"`
+	MetricsStale      bool   `json:"metricsStale,omitempty"`
 }
 
 type podMetricItem struct {
 	Name string
 	CPU  resource.Quantity
 	Mem  resource.Quantity
+}
+
+type metricsSnapshot struct {
+	items      map[string]podMetricItem
+	ageSeconds int
+	stale      bool
+}
+
+func (m *metricsSnapshot) usageForPod(podName string) (resource.Quantity, resource.Quantity, bool) {
+	if m == nil || len(m.items) == 0 {
+		return resource.Quantity{}, resource.Quantity{}, false
+	}
+	metric, ok := m.items[podName]
+	if !ok {
+		return resource.Quantity{}, resource.Quantity{}, false
+	}
+	return metric.CPU, metric.Mem, true
+}
+
+func (m *metricsSnapshot) usageForPods(podNames []string) (resource.Quantity, resource.Quantity, bool) {
+	if m == nil || len(m.items) == 0 || len(podNames) == 0 {
+		return resource.Quantity{}, resource.Quantity{}, false
+	}
+	totalCPU := resource.Quantity{}
+	totalMem := resource.Quantity{}
+	found := false
+	for _, name := range podNames {
+		if metric, ok := m.items[name]; ok {
+			totalCPU.Add(metric.CPU)
+			totalMem.Add(metric.Mem)
+			found = true
+		}
+	}
+	return totalCPU, totalMem, found
+}
+
+func applyMetricsMeta(usage *resourceUsage, snapshot *metricsSnapshot) {
+	if usage == nil || snapshot == nil {
+		return
+	}
+	usage.MetricsAgeSeconds = snapshot.ageSeconds
+	usage.MetricsStale = snapshot.stale
 }
 
 func formatCPUUsage(q resource.Quantity) string {
@@ -270,10 +314,10 @@ func (h *KubeHandler) handlePodsList(w http.ResponseWriter, r *http.Request, nam
 	if includeMetrics {
 		metadataOnly = false
 	}
-	var metrics map[string]podMetricItem
+	var metrics *metricsSnapshot
 	if includeMetrics {
-		if metricsMap, err := h.listPodMetricsCached(r.Context(), namespace); err == nil {
-			metrics = metricsMap
+		if metricsSnap, err := h.listPodMetricsCached(r.Context(), namespace); err == nil {
+			metrics = metricsSnap
 		}
 	}
 	if metadataOnly {
@@ -330,10 +374,10 @@ func (h *KubeHandler) handlePodGet(w http.ResponseWriter, r *http.Request, names
 	if u, ok := auth.UserFromContext(r.Context()); ok {
 		user = u
 	}
-	var metrics map[string]podMetricItem
+	var metrics *metricsSnapshot
 	if wantsMetrics(r) {
-		if metricsMap, err := h.listPodMetricsCached(r.Context(), namespace); err == nil {
-			metrics = metricsMap
+		if metricsSnap, err := h.listPodMetricsCached(r.Context(), namespace); err == nil {
+			metrics = metricsSnap
 		}
 	}
 	writeJSON(w, h.mapPod(pod, false, user, wantsRevealSecrets(r), metrics))
@@ -359,10 +403,10 @@ func (h *KubeHandler) handlePodDetails(w http.ResponseWriter, r *http.Request, n
 	if u, ok := auth.UserFromContext(r.Context()); ok {
 		user = u
 	}
-	var metrics map[string]podMetricItem
+	var metrics *metricsSnapshot
 	if wantsMetrics(r) {
-		if metricsMap, err := h.listPodMetricsCached(r.Context(), namespace); err == nil {
-			metrics = metricsMap
+		if metricsSnap, err := h.listPodMetricsCached(r.Context(), namespace); err == nil {
+			metrics = metricsSnap
 		}
 	}
 	writeJSON(w, h.mapPod(pod, true, user, wantsRevealSecrets(r), metrics))
@@ -392,10 +436,10 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 			podSnapshot = pods
 		}
 	}
-	var metrics map[string]podMetricItem
+	var metrics *metricsSnapshot
 	if includeMetrics {
-		if metricsMap, err := h.listPodMetricsCached(ctx, namespace); err == nil {
-			metrics = metricsMap
+		if metricsSnap, err := h.listPodMetricsCached(ctx, namespace); err == nil {
+			metrics = metricsSnap
 		}
 	}
 
@@ -554,10 +598,10 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 		user = u
 	}
 	reveal := wantsRevealSecrets(r)
-	var metrics map[string]podMetricItem
+	var metrics *metricsSnapshot
 	if wantsMetrics(r) {
-		if metricsMap, err := h.listPodMetricsCached(ctx, namespace); err == nil {
-			metrics = metricsMap
+		if metricsSnap, err := h.listPodMetricsCached(ctx, namespace); err == nil {
+			metrics = metricsSnap
 		}
 	}
 	podSnapshot, podErr := h.listPodsCached(ctx, namespace)
@@ -682,7 +726,7 @@ func (h *KubeHandler) allowApp(name string, labels map[string]string) bool {
 	return true
 }
 
-func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.User, revealSecrets bool, metrics map[string]podMetricItem) podResponse {
+func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.User, revealSecrets bool, metrics *metricsSnapshot) podResponse {
 	restarts := int32(0)
 	containers := make([]containerResponse, 0, len(pod.Status.ContainerStatuses))
 	for _, status := range pod.Status.ContainerStatuses {
@@ -705,9 +749,12 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 		CPULimit:   formatQuantityOrEmpty(limits.cpu),
 		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
-	if metric, ok := metrics[pod.Name]; ok {
-		usage.CPUUsage = formatCPUUsage(metric.CPU)
-		usage.MemUsage = formatMemUsage(metric.Mem)
+	if metrics != nil {
+		if cpu, mem, ok := metrics.usageForPod(pod.Name); ok {
+			usage.CPUUsage = formatCPUUsage(cpu)
+			usage.MemUsage = formatMemUsage(mem)
+		}
+		applyMetricsMeta(&usage, metrics)
 	}
 
 	env := map[string]string{}
@@ -783,35 +830,7 @@ func (h *KubeHandler) mapPodMetadata(meta metav1.PartialObjectMetadata) podRespo
 	}
 }
 
-func metricsForPod(podName string, metrics map[string]podMetricItem) (resource.Quantity, resource.Quantity, bool) {
-	if len(metrics) == 0 {
-		return resource.Quantity{}, resource.Quantity{}, false
-	}
-	metric, ok := metrics[podName]
-	if !ok {
-		return resource.Quantity{}, resource.Quantity{}, false
-	}
-	return metric.CPU, metric.Mem, true
-}
-
-func sumMetricsForPods(podNames []string, metrics map[string]podMetricItem) (resource.Quantity, resource.Quantity, bool) {
-	if len(metrics) == 0 || len(podNames) == 0 {
-		return resource.Quantity{}, resource.Quantity{}, false
-	}
-	totalCPU := resource.Quantity{}
-	totalMem := resource.Quantity{}
-	found := false
-	for _, name := range podNames {
-		if metric, ok := metrics[name]; ok {
-			totalCPU.Add(metric.CPU)
-			totalMem.Add(metric.Mem)
-			found = true
-		}
-	}
-	return totalCPU, totalMem, found
-}
-
-func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod, metrics map[string]podMetricItem) appResponse {
+func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod, metrics *metricsSnapshot) appResponse {
 	pods := h.podNamesForSelector(ctx, dep.Namespace, dep.Spec.Selector, podSnapshot)
 	requests, limits := sumResourceRequests(dep.Spec.Template.Spec.Containers)
 	volumes := extractVolumeMounts(dep.Spec.Template.Spec.Containers)
@@ -829,9 +848,12 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment,
 		CPULimit:   formatQuantityOrEmpty(limits.cpu),
 		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
-	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = formatCPUUsage(cpu)
-		usage.MemUsage = formatMemUsage(mem)
+	if metrics != nil {
+		if cpu, mem, ok := metrics.usageForPods(pods); ok {
+			usage.CPUUsage = formatCPUUsage(cpu)
+			usage.MemUsage = formatMemUsage(mem)
+		}
+		applyMetricsMeta(&usage, metrics)
 	}
 
 	return appResponse{
@@ -903,7 +925,7 @@ func (h *KubeHandler) mapDeploymentMetadata(meta metav1.PartialObjectMetadata) a
 	}
 }
 
-func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSet, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod, metrics map[string]podMetricItem) appResponse {
+func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSet, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod, metrics *metricsSnapshot) appResponse {
 	pods := h.podNamesForSelector(ctx, sts.Namespace, sts.Spec.Selector, podSnapshot)
 	requests, limits := sumResourceRequests(sts.Spec.Template.Spec.Containers)
 	volumes := extractVolumeMounts(sts.Spec.Template.Spec.Containers)
@@ -921,9 +943,12 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 		CPULimit:   formatQuantityOrEmpty(limits.cpu),
 		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
-	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = formatCPUUsage(cpu)
-		usage.MemUsage = formatMemUsage(mem)
+	if metrics != nil {
+		if cpu, mem, ok := metrics.usageForPods(pods); ok {
+			usage.CPUUsage = formatCPUUsage(cpu)
+			usage.MemUsage = formatMemUsage(mem)
+		}
+		applyMetricsMeta(&usage, metrics)
 	}
 
 	return appResponse{
@@ -995,7 +1020,7 @@ func (h *KubeHandler) mapStatefulSetMetadata(meta metav1.PartialObjectMetadata) 
 	}
 }
 
-func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, podSnapshot []corev1.Pod, metrics map[string]podMetricItem) appResponse {
+func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, podSnapshot []corev1.Pod, metrics *metricsSnapshot) appResponse {
 	pods, _ := h.podNamesForLabel(ctx, cluster.Metadata.Namespace, fmt.Sprintf("%s=%s", cnpgClusterLabelKey, cluster.Metadata.Name), podSnapshot)
 	requests, limits := sumResourceRequirements(cluster.Spec.Resources)
 	image := cluster.Spec.ImageName
@@ -1009,9 +1034,12 @@ func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, 
 		CPULimit:   formatQuantityOrEmpty(limits.cpu),
 		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
-	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = formatCPUUsage(cpu)
-		usage.MemUsage = formatMemUsage(mem)
+	if metrics != nil {
+		if cpu, mem, ok := metrics.usageForPods(pods); ok {
+			usage.CPUUsage = formatCPUUsage(cpu)
+			usage.MemUsage = formatMemUsage(mem)
+		}
+		applyMetricsMeta(&usage, metrics)
 	}
 
 	return appResponse{
@@ -1080,21 +1108,24 @@ func (h *KubeHandler) mapCnpgClusterMetadata(meta metav1.PartialObjectMetadata) 
 	}
 }
 
-func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod, metrics map[string]podMetricItem) appResponse {
+func (h *KubeHandler) mapDragonfly(ctx context.Context, dragonfly *dragonflyResource, user *auth.User, revealSecrets bool, podSnapshot []corev1.Pod, metrics *metricsSnapshot) appResponse {
 	pods, ready := h.podNamesForLabel(ctx, dragonfly.Metadata.Namespace, fmt.Sprintf("%s=%s", dragonflyAppLabelKey, dragonfly.Metadata.Name), podSnapshot)
 	requests, limits := sumResourceRequirements(dragonfly.Spec.Resources)
 	secretRefs, configRefs := extractEnvRefs(dragonfly.Spec.Env)
 	env, envSecrets := extractEnv(dragonfly.Metadata.Namespace, dragonfly.Spec.Env, nil, user, revealSecrets, h.client)
 
 	usage := resourceUsage{
-		CPURequest: requests.cpu.String(),
-		MemRequest: requests.mem.String(),
-		CPULimit:   limits.cpu.String(),
-		MemLimit:   limits.mem.String(),
+		CPURequest: formatQuantityOrEmpty(requests.cpu),
+		MemRequest: formatQuantityOrEmpty(requests.mem),
+		CPULimit:   formatQuantityOrEmpty(limits.cpu),
+		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
-	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = cpu.String()
-		usage.MemUsage = mem.String()
+	if metrics != nil {
+		if cpu, mem, ok := metrics.usageForPods(pods); ok {
+			usage.CPUUsage = formatCPUUsage(cpu)
+			usage.MemUsage = formatMemUsage(mem)
+		}
+		applyMetricsMeta(&usage, metrics)
 	}
 
 	return appResponse{
@@ -1815,6 +1846,141 @@ func customResourceKey(crd config.CustomResourceConfig) string {
 	return fmt.Sprintf("%s/%s/%s", crd.Group, crd.Version, crd.Resource)
 }
 
+func customResourcePath(namespace, name string, crd config.CustomResourceConfig) string {
+	return fmt.Sprintf("/apis/%s/%s/namespaces/%s/%s/%s", crd.Group, crd.Version, namespace, crd.Resource, name)
+}
+
+func nestedValue(obj map[string]any, path string) (any, bool) {
+	if obj == nil || path == "" {
+		return nil, false
+	}
+	parts := strings.Split(path, ".")
+	var current any = obj
+	for _, part := range parts {
+		m, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = m[part]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func toStringMap(val any) (map[string]string, bool) {
+	raw, ok := val.(map[string]any)
+	if !ok {
+		return nil, false
+	}
+	out := map[string]string{}
+	for key, value := range raw {
+		str, ok := value.(string)
+		if !ok {
+			return nil, false
+		}
+		out[key] = str
+	}
+	return out, true
+}
+
+func toLabelSelectorRequirement(val any) (metav1.LabelSelectorRequirement, bool) {
+	raw, ok := val.(map[string]any)
+	if !ok {
+		return metav1.LabelSelectorRequirement{}, false
+	}
+	key, _ := raw["key"].(string)
+	operator, _ := raw["operator"].(string)
+	values := []string{}
+	if rawVals, ok := raw["values"].([]any); ok {
+		for _, v := range rawVals {
+			if s, ok := v.(string); ok {
+				values = append(values, s)
+			}
+		}
+	}
+	if key == "" || operator == "" {
+		return metav1.LabelSelectorRequirement{}, false
+	}
+	return metav1.LabelSelectorRequirement{
+		Key:      key,
+		Operator: metav1.LabelSelectorOperator(operator),
+		Values:   values,
+	}, true
+}
+
+func selectorFromValue(val any) (string, bool) {
+	switch v := val.(type) {
+	case string:
+		v = strings.TrimSpace(v)
+		if v == "" {
+			return "", false
+		}
+		return v, true
+	case map[string]any:
+		if labels, ok := toStringMap(v["matchLabels"]); ok {
+			selector := labelsAsSelector(labels)
+			return selector.String(), true
+		}
+		if labels, ok := toStringMap(v); ok {
+			selector := labelsAsSelector(labels)
+			return selector.String(), true
+		}
+		if exprs, ok := v["matchExpressions"].([]any); ok {
+			reqs := []metav1.LabelSelectorRequirement{}
+			for _, expr := range exprs {
+				if req, ok := toLabelSelectorRequirement(expr); ok {
+					reqs = append(reqs, req)
+				}
+			}
+			if len(reqs) > 0 {
+				selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+					MatchExpressions: reqs,
+				})
+				if err == nil {
+					return selector.String(), true
+				}
+			}
+		}
+	}
+	return "", false
+}
+
+func labelsAsSelector(labelMap map[string]string) labels.Selector {
+	return labels.SelectorFromSet(labels.Set(labelMap))
+}
+
+func (h *KubeHandler) customResourceSelector(ctx context.Context, namespace, name string, crd config.CustomResourceConfig) (string, bool, error) {
+	if h.client == nil {
+		return "", false, errors.New("k8s client unavailable")
+	}
+	path := customResourcePath(namespace, name, crd)
+	data, err := h.client.RESTClient().Get().AbsPath(path).Do(ctx).Raw()
+	if err != nil {
+		return "", false, err
+	}
+	raw := map[string]any{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return "", false, err
+	}
+	paths := []string{}
+	if crd.SelectorPath != "" {
+		paths = append(paths, crd.SelectorPath)
+	}
+	paths = append(paths, "spec.selector", "spec.podSelector", "spec.selectors")
+	for _, path := range paths {
+		val, ok := nestedValue(raw, path)
+		if !ok {
+			continue
+		}
+		if selector, ok := selectorFromValue(val); ok {
+			return selector, true, nil
+		}
+	}
+	return "", false, nil
+}
+
 func (h *KubeHandler) podNamesForSelector(ctx context.Context, namespace string, selector *metav1.LabelSelector, podSnapshot []corev1.Pod) []string {
 	if podSnapshot != nil {
 		return h.filterPodsBySelector(podSnapshot, selector)
@@ -2193,40 +2359,64 @@ func fetchConfigMapValue(client *kubernetes.Clientset, namespace, name, key stri
 	return value, nil
 }
 
-func (h *KubeHandler) listPodMetricsCached(ctx context.Context, namespace string) (map[string]podMetricItem, error) {
-	if h.cache != nil {
-		items, err := h.cache.doPodMetrics(namespace, func() ([]podMetricItem, error) {
-			if cached, ok := h.cache.getPodMetrics(namespace); ok {
-				return cached, nil
-			}
-			items, err := listPodMetrics(ctx, h.client, namespace, h.cache)
-			if err != nil {
-				return nil, err
-			}
-			h.cache.setPodMetrics(namespace, items)
-			return items, nil
-		})
+func (h *KubeHandler) listPodMetricsCached(ctx context.Context, namespace string) (*metricsSnapshot, error) {
+	staleSeconds := h.cfg.Kubernetes.APICache.MetricsStaleSeconds
+	if h.cache == nil {
+		items, err := listPodMetrics(ctx, h.client, namespace, h.cache)
 		if err != nil {
 			return nil, err
 		}
-		return mapMetrics(items), nil
+		return mapMetricsSnapshot(items, time.Now().UTC(), staleSeconds), nil
 	}
-	items, err := listPodMetrics(ctx, h.client, namespace, h.cache)
+
+	entry, hasCache := h.cache.getPodMetricsEntry(namespace)
+	if hasCache && (h.cache.metricsTTL <= 0 || time.Since(entry.fetched) <= h.cache.metricsTTL) {
+		return mapMetricsSnapshot(entry.items, entry.fetched, staleSeconds), nil
+	}
+
+	_, err := h.cache.doPodMetrics(namespace, func() ([]podMetricItem, error) {
+		items, err := listPodMetrics(ctx, h.client, namespace, h.cache)
+		if err != nil {
+			if hasCache {
+				return entry.items, nil
+			}
+			return nil, err
+		}
+		h.cache.setPodMetrics(namespace, items)
+		return items, nil
+	})
 	if err != nil {
+		if hasCache {
+			return mapMetricsSnapshot(entry.items, entry.fetched, staleSeconds), nil
+		}
 		return nil, err
 	}
-	return mapMetrics(items), nil
+
+	updated, ok := h.cache.getPodMetricsEntry(namespace)
+	if ok {
+		return mapMetricsSnapshot(updated.items, updated.fetched, staleSeconds), nil
+	}
+	if hasCache {
+		return mapMetricsSnapshot(entry.items, entry.fetched, staleSeconds), nil
+	}
+	return nil, nil
 }
 
-func mapMetrics(items []podMetricItem) map[string]podMetricItem {
+func mapMetricsSnapshot(items []podMetricItem, fetched time.Time, staleSeconds int) *metricsSnapshot {
 	if len(items) == 0 {
-		return map[string]podMetricItem{}
+		return nil
 	}
 	out := make(map[string]podMetricItem, len(items))
 	for _, item := range items {
 		out[item.Name] = item
 	}
-	return out
+	ageSeconds := int(time.Since(fetched).Seconds())
+	stale := staleSeconds > 0 && ageSeconds >= staleSeconds
+	return &metricsSnapshot{
+		items:      out,
+		ageSeconds: ageSeconds,
+		stale:      stale,
+	}
 }
 
 func listPodMetrics(ctx context.Context, client *kubernetes.Clientset, namespace string, cache *resourceCache) ([]podMetricItem, error) {
@@ -2441,12 +2631,22 @@ func selectorString(selector *metav1.LabelSelector) string {
 
 func (h *KubeHandler) appSelector(ctx context.Context, namespace, name string) (string, error) {
 	for _, crd := range h.enabledCustomResources() {
+		selector, ok, err := h.customResourceSelector(ctx, namespace, name, crd)
+		if err != nil && !apierrors.IsNotFound(err) {
+			return "", err
+		}
+		if ok && selector != "" {
+			return selector, nil
+		}
 		if crd.PodLabelKey == "" {
 			continue
 		}
 		meta, err := h.getCustomResourceMetadata(ctx, namespace, crd, name)
 		if err == nil && meta != nil && meta.Name == name {
 			return fmt.Sprintf("%s=%s", crd.PodLabelKey, name), nil
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			return "", err
 		}
 	}
 

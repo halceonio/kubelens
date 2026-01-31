@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/rand"
 	"net/http"
 	"regexp"
 	"sort"
@@ -25,20 +26,21 @@ import (
 )
 
 type KubeHandler struct {
-	cfg        *config.Config
-	client     *kubernetes.Clientset
-	podInclude *regexp.Regexp
-	appInclude *regexp.Regexp
-	podExclude []labelFilter
-	appExclude []labelFilter
-	appStreams *appStreamPool
-	cache      *resourceCache
-	informers  *resourceInformers
-	stats      *ResourceStats
-	statsStop  chan struct{}
-	metaClient metadata.Interface
-	logHub     *logStreamHub
-	logLimiter *logLimiter
+	cfg         *config.Config
+	client      *kubernetes.Clientset
+	podInclude  *regexp.Regexp
+	appInclude  *regexp.Regexp
+	podExclude  []labelFilter
+	appExclude  []labelFilter
+	appStreams  *appStreamPool
+	cache       *resourceCache
+	informers   *resourceInformers
+	stats       *ResourceStats
+	statsStop   chan struct{}
+	metaClient  metadata.Interface
+	logHub      *logStreamHub
+	logLimiter  *logLimiter
+	metricsStop chan struct{}
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metadata.Interface) *KubeHandler {
@@ -49,7 +51,15 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 	metricsTTL := time.Duration(apiCache.MetricsListTTLSeconds) * time.Second
 	retryBase := time.Duration(apiCache.RetryBaseDelayMillis) * time.Millisecond
 	stats := newResourceStats()
-	limiter := newLogLimiter(cfg.Logs.RateLimitPerMinute, cfg.Logs.RateLimitBurst)
+	overrideEntries := make([]rateConfigEntry, 0, len(cfg.Logs.RateLimitOverrides))
+	for _, entry := range cfg.Logs.RateLimitOverrides {
+		overrideEntries = append(overrideEntries, rateConfigEntry{
+			namespace:     entry.Namespace,
+			ratePerMinute: entry.RateLimitPerMinute,
+			burst:         entry.RateLimitBurst,
+		})
+	}
+	limiter := newLogLimiter(cfg.Logs.RateLimitPerMinute, cfg.Logs.RateLimitBurst, overrideEntries)
 	handler := &KubeHandler{
 		cfg:        cfg,
 		client:     client,
@@ -71,6 +81,10 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 		handler.informers.Start()
 	}
 	handler.startStatsLogger()
+	handler.startMetricsRefresh()
+	if cfg.Kubernetes.APICache.WarmOnStartup {
+		go handler.warmCaches()
+	}
 	return handler
 }
 
@@ -80,6 +94,9 @@ func (h *KubeHandler) Stop() {
 	}
 	if h.statsStop != nil {
 		close(h.statsStop)
+	}
+	if h.metricsStop != nil {
+		close(h.metricsStop)
 	}
 	if h.informers != nil {
 		h.informers.Stop()
@@ -120,6 +137,73 @@ func (h *KubeHandler) startStatsLogger() {
 			}
 		}
 	}()
+}
+
+func (h *KubeHandler) startMetricsRefresh() {
+	if h == nil || h.client == nil {
+		return
+	}
+	interval := time.Duration(h.cfg.Kubernetes.APICache.MetricsRefreshSeconds) * time.Second
+	if interval <= 0 {
+		return
+	}
+	jitter := time.Duration(h.cfg.Kubernetes.APICache.MetricsRefreshJitter) * time.Second
+	if h.metricsStop != nil {
+		return
+	}
+	h.metricsStop = make(chan struct{})
+	ticker := time.NewTicker(interval)
+	go func() {
+		for {
+			select {
+			case <-ticker.C:
+				h.refreshMetrics(jitter)
+			case <-h.metricsStop:
+				ticker.Stop()
+				return
+			}
+		}
+	}()
+}
+
+func (h *KubeHandler) refreshMetrics(jitter time.Duration) {
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	rng := rand.New(rand.NewSource(time.Now().UnixNano()))
+	for _, ns := range h.cfg.Kubernetes.AllowedNamespaces {
+		if jitter > 0 {
+			sleep := time.Duration(rng.Int63n(int64(jitter)))
+			select {
+			case <-time.After(sleep):
+			case <-ctx.Done():
+				return
+			}
+		}
+		if h.cache == nil {
+			_, _ = listPodMetrics(ctx, h.client, ns, nil)
+			continue
+		}
+		items, err := listPodMetrics(ctx, h.client, ns, h.cache)
+		if err != nil {
+			continue
+		}
+		h.cache.setPodMetrics(ns, items)
+	}
+}
+
+func (h *KubeHandler) warmCaches() {
+	if h == nil || h.client == nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	for _, ns := range h.cfg.Kubernetes.AllowedNamespaces {
+		_, _ = h.listPodsCached(ctx, ns)
+		_, _ = h.listDeploymentsCached(ctx, ns)
+		_, _ = h.listStatefulSetsCached(ctx, ns)
+		_, _ = h.listCnpgClustersCached(ctx, ns)
+		_, _ = h.listDragonfliesCached(ctx, ns)
+	}
 }
 
 func (h *KubeHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -453,7 +537,7 @@ func (h *KubeHandler) allowLogRequest(r *http.Request, namespace string) bool {
 	} else if r != nil {
 		key = remoteIP(r) + "|" + namespace
 	}
-	allowed := h.logLimiter.Allow(key)
+	allowed := h.logLimiter.Allow(namespace, key)
 	if !allowed {
 		h.audit(r, "log_rate_limited", namespace, "", nil)
 	}

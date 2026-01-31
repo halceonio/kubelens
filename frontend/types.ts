@@ -32,6 +32,8 @@ export interface ResourceUsage {
   memUsage: string;
   memRequest: string;
   memLimit: string;
+  metricsAgeSeconds?: number;
+  metricsStale?: boolean;
 }
 
 export interface Pod {
@@ -82,6 +84,8 @@ export interface SavedView {
   labelRegex?: string;
   logLevel?: LogLevel | 'ALL';
   group?: string;
+  logIncludeRegex?: string;
+  logExcludeRegex?: string;
   autoApply?: boolean;
 }
 
@@ -90,6 +94,8 @@ export interface ViewFilters {
   labelRegex?: string;
   logLevel?: LogLevel | 'ALL';
   group?: string;
+  logIncludeRegex?: string;
+  logExcludeRegex?: string;
 }
 
 export interface LogViewPreferences {

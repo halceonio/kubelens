@@ -27,6 +27,16 @@ This controls how often app log streams re-check pod membership to pick up new r
 ## Resource metrics (CPU/Memory)
 KubeLens fetches live usage from the Kubernetes Metrics API (`metrics.k8s.io`). Ensure `metrics-server` is installed in the cluster. The frontend requests metrics on demand via the `metrics=true` query parameter. When metrics are unavailable, usage fields render as `—`.
 
+Background refresh and staleness thresholds:
+```yaml
+kubernetes:
+  api_cache:
+    metrics_list_ttl_seconds: 5
+    metrics_refresh_seconds: 15
+    metrics_refresh_jitter_seconds: 5
+    metrics_stale_seconds: 30
+```
+
 ## Shared log workers (Redis Streams)
 KubeLens can pool log streams across multiple backend replicas using Redis Streams:
 ```yaml
@@ -47,6 +57,10 @@ To avoid excessive log stream opens per user/namespace:
 logs:
   rate_limit_per_minute: 120
   rate_limit_burst: 240
+  rate_limit_overrides:
+    - namespace: "internal-apps"
+      rate_limit_per_minute: 240
+      rate_limit_burst: 480
 ```
 Limits apply per user + namespace and return `429` when exceeded.
 
@@ -69,8 +83,9 @@ kubernetes:
       kind: "Cluster"
       enabled: true
       pod_label_key: "cnpg.io/cluster"
+      selector_path: "spec.selector"
 ```
-`pod_label_key` is optional but required for log streaming to work for the CRD.
+`pod_label_key` is optional but required for log streaming to work for the CRD. `selector_path` is optional and lets you point to the CRD's label selector (e.g. `spec.selector` or `spec.selector.matchLabels`); if omitted, KubeLens tries common selector paths.
 
 ## API cache modes
 The API cache supports an optional metadata-only list mode to reduce API server load:
@@ -80,6 +95,13 @@ kubernetes:
     metadata_only: true
 ```
 When enabled, list endpoints return `metadataOnly: true` resources with minimal fields, and the UI fetches full resource details on demand.
+
+Warm caches on startup (optional):
+```yaml
+kubernetes:
+  api_cache:
+    warm_on_startup: true
+```
 
 Metrics responses are cached briefly to reduce metrics-server load:
 ```yaml

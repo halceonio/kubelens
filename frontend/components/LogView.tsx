@@ -18,6 +18,8 @@ interface LogViewProps {
   globalShowTimestamp?: boolean;
   globalShowDetails?: boolean;
   globalShowMetrics?: boolean;
+  logIncludeRegex?: string;
+  logExcludeRegex?: string;
 }
 
 type TimeFilterType = 'all' | '1m' | '5m' | '15m' | '30m' | '1h';
@@ -406,7 +408,7 @@ const LogRow = memo(({ index, style, data }: { index: number; style: React.CSSPr
   );
 });
 
-const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', globalWrap = false, globalShowTimestamp = true, globalShowDetails = true, globalShowMetrics = false }) => {
+const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, accessToken, config, initialLogLevel, onLogLevelChange, density = 'default', globalWrap = false, globalShowTimestamp = true, globalShowDetails = true, globalShowMetrics = false, logIncludeRegex, logExcludeRegex }) => {
   const isApp = 'type' in resource;
   const initialPods = isApp ? (resource as AppResource).podNames : [(resource as Pod).name];
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
@@ -434,6 +436,8 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [annotations, setAnnotations] = useState<Record<string, string>>({});
   const [isAnnotateOpen, setIsAnnotateOpen] = useState(false);
   const [annotationNote, setAnnotationNote] = useState('');
+  const [isContextOpen, setIsContextOpen] = useState(false);
+  const [contextWindow, setContextWindow] = useState<{ before: LogEntry[]; target: LogEntry; after: LogEntry[] } | null>(null);
   const [focusTimestamp, setFocusTimestamp] = useState<string | null>(null);
   const [focusIndex, setFocusIndex] = useState<number | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
@@ -441,6 +445,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const [isStreamInfoOpen, setIsStreamInfoOpen] = useState(false);
   const [removedPods, setRemovedPods] = useState<string[]>([]);
   const [autoSelectPods, setAutoSelectPods] = useState(true);
+  const [toasts, setToasts] = useState<{ id: string; message: string; tone: 'info' | 'warn' }[]>([]);
+  const [scrubValue, setScrubValue] = useState(100);
+  const [jumpTime, setJumpTime] = useState('');
+  const [compareMode, setCompareMode] = useState(false);
+  const [comparePods, setComparePods] = useState<[string, string]>(['', '']);
 
   const densityConfig = useMemo(() => {
     switch (density) {
@@ -506,6 +515,18 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   const isPausedRef = useRef(false);
   const streamInfoRef = useRef<HTMLDivElement>(null);
   const autoSelectRef = useRef(true);
+  const toastTimeoutsRef = useRef<number[]>([]);
+  const prevStreamStatusRef = useRef(streamStatus);
+  const prevDroppedRef = useRef(droppedCount);
+
+  const pushToast = useCallback((message: string, tone: 'info' | 'warn' = 'info') => {
+    const id = `${Date.now()}-${Math.random().toString(36).slice(2, 6)}`;
+    setToasts(prev => [...prev, { id, message, tone }]);
+    const timeout = window.setTimeout(() => {
+      setToasts(prev => prev.filter(t => t.id !== id));
+    }, 3000);
+    toastTimeoutsRef.current.push(timeout);
+  }, []);
 
   useEffect(() => {
     if (availableContainers.length > 0) {
@@ -521,6 +542,22 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     setRemovedPods([]);
     setAutoSelectPods(true);
   }, [resource.name, resource.namespace, initialPods.join('|')]);
+
+  useEffect(() => {
+    if (!compareMode) return;
+    setComparePods(prev => {
+      const pool = selectedPods.length > 0 ? selectedPods : availablePods;
+      if (pool.length === 0) return prev;
+      let [left, right] = prev;
+      if (!left || !pool.includes(left)) {
+        left = pool[0];
+      }
+      if (!right || right === left || !pool.includes(right)) {
+        right = pool.find(p => p !== left) || '';
+      }
+      return [left, right];
+    });
+  }, [compareMode, selectedPods, availablePods]);
 
   useEffect(() => {
     if (initialLogLevel) {
@@ -541,6 +578,34 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   useEffect(() => {
     autoSelectRef.current = autoSelectPods;
   }, [autoSelectPods]);
+
+  useEffect(() => {
+    if (prevStreamStatusRef.current !== streamStatus) {
+      if (streamStatus === 'reconnecting') {
+        pushToast('Log stream reconnecting…', 'warn');
+      } else if (streamStatus === 'live' && prevStreamStatusRef.current === 'reconnecting') {
+        pushToast('Log stream reconnected', 'info');
+      }
+      prevStreamStatusRef.current = streamStatus;
+    }
+  }, [streamStatus, pushToast]);
+
+  useEffect(() => {
+    if (droppedCount > prevDroppedRef.current) {
+      const delta = droppedCount - prevDroppedRef.current;
+      pushToast(`Dropped ${delta} log${delta > 1 ? 's' : ''}`, 'warn');
+      prevDroppedRef.current = droppedCount;
+    } else if (droppedCount < prevDroppedRef.current) {
+      prevDroppedRef.current = droppedCount;
+    }
+  }, [droppedCount, pushToast]);
+
+  useEffect(() => {
+    return () => {
+      toastTimeoutsRef.current.forEach(timeoutId => window.clearTimeout(timeoutId));
+      toastTimeoutsRef.current = [];
+    };
+  }, []);
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.hash.substring(1));
@@ -775,14 +840,33 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     return () => resizeObserver.disconnect();
   }, [isMaximized]);
 
-  const filteredLogs = useMemo(() => {
+  const includeRegex = useMemo(() => {
+    if (!logIncludeRegex) return null;
+    try {
+      return new RegExp(logIncludeRegex, 'i');
+    } catch (e) {
+      return null;
+    }
+  }, [logIncludeRegex]);
+
+  const excludeRegex = useMemo(() => {
+    if (!logExcludeRegex) return null;
+    try {
+      return new RegExp(logExcludeRegex, 'i');
+    } catch (e) {
+      return null;
+    }
+  }, [logExcludeRegex]);
+
+  const baseFilteredLogs = useMemo(() => {
     const now = new Date().getTime();
     return logs.filter(log => {
-      if (log.kind !== 'marker') {
-        if (!selectedPods.includes(log.podName)) return false;
-        if (selectedLevel !== 'ALL' && log.level !== selectedLevel) return false;
+      if (log.kind !== 'marker' && selectedLevel !== 'ALL' && log.level !== selectedLevel) {
+        return false;
       }
       const message = stripAnsi(log.message);
+      if (includeRegex && !includeRegex.test(message)) return false;
+      if (excludeRegex && excludeRegex.test(message)) return false;
       if (filter && !message.toLowerCase().includes(filter.toLowerCase())) return false;
       if (timeFilter !== 'all') {
         const logTime = new Date(log.timestamp).getTime();
@@ -792,7 +876,32 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       }
       return true;
     });
-  }, [logs, selectedPods, selectedLevel, filter, timeFilter]);
+  }, [logs, selectedLevel, filter, timeFilter, includeRegex, excludeRegex]);
+
+  const filteredLogs = useMemo(() => {
+    return baseFilteredLogs.filter(log => {
+      if (log.kind === 'marker') return true;
+      return selectedPods.includes(log.podName);
+    });
+  }, [baseFilteredLogs, selectedPods]);
+
+  const compareLogs = useMemo(() => {
+    if (!compareMode) return null;
+    const [left, right] = comparePods;
+    return {
+      left: left ? baseFilteredLogs.filter(log => log.podName === left) : [],
+      right: right ? baseFilteredLogs.filter(log => log.podName === right) : []
+    };
+  }, [compareMode, comparePods, baseFilteredLogs]);
+
+  const timelineInfo = useMemo(() => {
+    if (filteredLogs.length === 0) return null;
+    const first = filteredLogs[0];
+    const last = filteredLogs[filteredLogs.length - 1];
+    const start = new Date(first.timestamp).getTime();
+    const end = new Date(last.timestamp).getTime();
+    return { start, end };
+  }, [filteredLogs]);
 
   const matchIndices = useMemo(() => {
     if (!searchQuery) return [];
@@ -825,9 +934,37 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   }, [matchIndices]);
 
   useEffect(() => {
+    if (isAutoScroll) {
+      setScrubValue(100);
+    }
+  }, [filteredLogs.length, isAutoScroll]);
+
+  const handleScrubChange = useCallback((value: number) => {
+    setScrubValue(value);
+    if (compareMode || filteredLogs.length === 0 || !listRef.current) return;
+    const maxIndex = filteredLogs.length - 1;
+    const targetIndex = Math.min(maxIndex, Math.max(0, Math.round((value / 100) * maxIndex)));
+    listRef.current.scrollToItem(targetIndex, 'center');
+    setFocusIndex(targetIndex);
+  }, [filteredLogs, compareMode]);
+
+  const handleJumpToTime = useCallback(() => {
+    if (compareMode || !jumpTime || filteredLogs.length === 0 || !listRef.current) return;
+    const targetTime = new Date(jumpTime).getTime();
+    if (Number.isNaN(targetTime)) return;
+    let index = filteredLogs.findIndex(log => new Date(log.timestamp).getTime() >= targetTime);
+    if (index === -1) {
+      index = filteredLogs.length - 1;
+    }
+    listRef.current.scrollToItem(index, 'center');
+    setFocusIndex(index);
+    setScrubValue(filteredLogs.length > 1 ? Math.round((index / (filteredLogs.length - 1)) * 100) : 0);
+  }, [jumpTime, filteredLogs, compareMode]);
+
+  useEffect(() => {
     setSelectedIndices(new Set());
     setLastSelectedIndex(null);
-  }, [filter, selectedLevel, selectedPods, wrapMode, timestampMode, detailsMode, globalWrap, globalShowTimestamp, globalShowDetails]);
+  }, [filter, selectedLevel, selectedPods, wrapMode, timestampMode, detailsMode, globalWrap, globalShowTimestamp, globalShowDetails, logIncludeRegex, logExcludeRegex, compareMode]);
 
   useEffect(() => {
     if (!focusTimestamp) return;
@@ -841,10 +978,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
   }, [focusTimestamp, filteredLogs]);
 
   useEffect(() => {
+    if (compareMode) return;
     if (isAutoScroll && listRef.current && filteredLogs.length > 0) {
       listRef.current.scrollToItem(filteredLogs.length - 1, 'end');
     }
-  }, [filteredLogs.length, isAutoScroll]);
+  }, [filteredLogs.length, isAutoScroll, compareMode]);
 
   const handleRowClick = (index: number, event: React.MouseEvent) => {
     const newSelected = new Set(selectedIndices);
@@ -885,6 +1023,22 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
     navigator.clipboard.writeText(selectedLines);
     alert(`Copied ${selectedIndices.size} lines to clipboard`);
   };
+
+  const openContext = useCallback(() => {
+    if (selectedIndices.size !== 1) return;
+    const index = Array.from(selectedIndices)[0];
+    const target = filteredLogs[index];
+    if (!target) return;
+    const windowSize = 20;
+    const start = Math.max(0, index - windowSize);
+    const end = Math.min(filteredLogs.length, index + windowSize + 1);
+    setContextWindow({
+      before: filteredLogs.slice(start, index),
+      target,
+      after: filteredLogs.slice(index + 1, end)
+    });
+    setIsContextOpen(true);
+  }, [selectedIndices, filteredLogs]);
 
   const togglePod = (name: string) => {
     setAutoSelectPods(false);
@@ -975,6 +1129,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               <span className="px-2 py-0.5 rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700">
                 MEM {resource.resources?.memUsage || '—'} / {resource.resources?.memLimit || resource.resources?.memRequest || '--'}
               </span>
+              {resource.resources?.metricsStale && (
+                <span className="px-2 py-0.5 rounded bg-amber-500/15 border border-amber-500/30 text-amber-500 uppercase">
+                  Stale
+                </span>
+              )}
             </div>
           )}
           
@@ -1107,6 +1266,44 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
             </div>
           )}
 
+          {isApp && (
+            <div className="flex items-center gap-1.5">
+              <button
+                onClick={() => setCompareMode(prev => !prev)}
+                className={`px-2 py-1 text-[9px] font-bold uppercase rounded border transition-all ${
+                  compareMode
+                    ? 'bg-sky-500/15 text-sky-500 border-sky-500/30'
+                    : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500'
+                }`}
+                title="Compare two pods"
+              >
+                Compare
+              </button>
+              {compareMode && (
+                <div className="hidden md:flex items-center gap-1.5">
+                  <select
+                    value={comparePods[0] || ''}
+                    onChange={(e) => setComparePods([e.target.value, comparePods[1]])}
+                    className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] font-bold text-slate-600 dark:text-slate-300 rounded px-2 py-1"
+                  >
+                    {availablePods.map((pod) => (
+                      <option key={pod} value={pod}>{pod}</option>
+                    ))}
+                  </select>
+                  <select
+                    value={comparePods[1] || ''}
+                    onChange={(e) => setComparePods([comparePods[0], e.target.value])}
+                    className="bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-[9px] font-bold text-slate-600 dark:text-slate-300 rounded px-2 py-1"
+                  >
+                    {availablePods.map((pod) => (
+                      <option key={pod} value={pod}>{pod}</option>
+                    ))}
+                  </select>
+                </div>
+              )}
+            </div>
+          )}
+
           <div className="flex items-center bg-slate-100 dark:bg-slate-800 rounded-lg p-0.5 border border-slate-200 dark:border-slate-700 transition-colors duration-200">
             {['ALL', 'INFO', 'WARN', 'ERR'].map(level => (
               <button
@@ -1184,19 +1381,53 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
           </div>
         ) : (
           dimensions.height > 0 && dimensions.width > 0 && FixedSizeList && (
-            <div className="h-full w-full overflow-x-auto overflow-y-hidden">
-              <FixedSizeList
-                ref={listRef}
-                height={dimensions.height - 16}
-                itemCount={filteredLogs.length}
-                itemSize={effectiveWrap ? wrapHeight : rowHeight}
-                width={dimensions.width - 16}
-                className="custom-scrollbar"
-                itemData={rowData}
-              >
-                {LogRow}
-              </FixedSizeList>
-            </div>
+            compareMode && compareLogs ? (
+              <div className="h-full w-full grid grid-cols-1 lg:grid-cols-2 gap-2 overflow-hidden">
+                {(['left', 'right'] as const).map((side) => {
+                  const podName = side === 'left' ? comparePods[0] : comparePods[1];
+                  const logsForSide = side === 'left' ? compareLogs.left : compareLogs.right;
+                  const sideRowData: RowData = {
+                    ...rowData,
+                    logs: logsForSide,
+                    selectedIndices: new Set(),
+                    onRowClick: () => {}
+                  };
+                  return (
+                    <div key={side} className="flex flex-col h-full min-h-0 border border-slate-800/60 rounded-md overflow-hidden">
+                      <div className="px-2 py-1 text-[10px] font-bold text-slate-400 bg-slate-900 border-b border-slate-800">
+                        {podName || 'Select a pod'}
+                      </div>
+                      <div className="flex-1 overflow-x-auto overflow-y-hidden">
+                        <FixedSizeList
+                          height={dimensions.height - 48}
+                          itemCount={logsForSide.length}
+                          itemSize={effectiveWrap ? wrapHeight : rowHeight}
+                          width={Math.max(0, Math.floor((dimensions.width - 24) / 2))}
+                          className="custom-scrollbar"
+                          itemData={sideRowData}
+                        >
+                          {LogRow}
+                        </FixedSizeList>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            ) : (
+              <div className="h-full w-full overflow-x-auto overflow-y-hidden">
+                <FixedSizeList
+                  ref={listRef}
+                  height={dimensions.height - 16}
+                  itemCount={filteredLogs.length}
+                  itemSize={effectiveWrap ? wrapHeight : rowHeight}
+                  width={dimensions.width - 16}
+                  className="custom-scrollbar"
+                  itemData={rowData}
+                >
+                  {LogRow}
+                </FixedSizeList>
+              </div>
+            )
           )
         )}
       </div>
@@ -1306,6 +1537,48 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               Link
             </button>
           )}
+          {selectedIndices.size === 1 && (
+            <button
+              onClick={openContext}
+              className="flex items-center gap-1.5 px-2 py-1 bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 dark:text-slate-300 text-[9px] font-bold uppercase rounded transition-all"
+            >
+              <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 8h10M7 12h10M7 16h10" />
+              </svg>
+              Context
+            </button>
+          )}
+
+          {timelineInfo && !compareMode && (
+            <div className="hidden md:flex items-center gap-2">
+              <span className="text-[9px] text-slate-400 uppercase">Timeline</span>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                value={scrubValue}
+                onChange={(e) => handleScrubChange(Number(e.target.value))}
+                className="w-28"
+              />
+            </div>
+          )}
+
+          {timelineInfo && !compareMode && (
+            <div className="hidden lg:flex items-center gap-1.5">
+              <input
+                type="datetime-local"
+                value={jumpTime}
+                onChange={(e) => setJumpTime(e.target.value)}
+                className="bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[9px] text-slate-600 dark:text-slate-400"
+              />
+              <button
+                onClick={handleJumpToTime}
+                className="px-2 py-1 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+              >
+                Jump
+              </button>
+            </div>
+          )}
 
           <div className="relative">
             <input 
@@ -1404,6 +1677,88 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {isContextOpen && contextWindow && (
+        <div className="fixed inset-0 z-[125] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-4xl rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl overflow-hidden">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Log context</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                  20 lines before and after the selected entry.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsContextOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-5 py-4 max-h-[60vh] overflow-auto font-mono text-[11px] text-slate-200 bg-slate-950">
+              {[...contextWindow.before, contextWindow.target, ...contextWindow.after].map((entry, idx) => {
+                const isTarget = entry === contextWindow.target;
+                const ts = new Date(entry.timestamp).toLocaleTimeString();
+                return (
+                  <div
+                    key={`${entry.id}-${idx}`}
+                    className={`whitespace-pre-wrap break-all px-2 py-1 rounded ${
+                      isTarget ? 'bg-sky-500/20 border border-sky-500/40' : ''
+                    }`}
+                  >
+                    <span className="text-slate-500 mr-2">[{ts}]</span>
+                    {isApp && <span className="text-slate-400 mr-2">[{entry.podName}]</span>}
+                    <span className="text-slate-400 mr-2">[{entry.level}]</span>
+                    {renderAnsiWithHighlight(entry.message, searchQuery)}
+                  </div>
+                );
+              })}
+            </div>
+            <div className="flex items-center justify-end gap-2 px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
+              <button
+                onClick={() => {
+                  const lines = [...contextWindow.before, contextWindow.target, ...contextWindow.after]
+                    .map(entry => {
+                      const ts = `[${new Date(entry.timestamp).toLocaleTimeString()}] `;
+                      const pod = isApp ? `[${entry.podName}] ` : '';
+                      return `${ts}${pod}[${entry.level}] ${entry.message}`;
+                    })
+                    .join('\n');
+                  void navigator.clipboard.writeText(lines);
+                }}
+                className="px-3 py-1.5 text-xs font-bold uppercase rounded-md bg-sky-500 text-white hover:bg-sky-400"
+              >
+                Copy context
+              </button>
+              <button
+                onClick={() => setIsContextOpen(false)}
+                className="px-3 py-1.5 text-xs font-bold uppercase text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {toasts.length > 0 && (
+        <div className="absolute right-4 bottom-12 flex flex-col gap-2 z-[110]">
+          {toasts.map(toast => (
+            <div
+              key={toast.id}
+              className={`px-3 py-2 rounded-md border text-[10px] font-semibold shadow-lg ${
+                toast.tone === 'warn'
+                  ? 'bg-amber-500/15 border-amber-500/40 text-amber-500'
+                  : 'bg-sky-500/15 border-sky-500/30 text-sky-500'
+              }`}
+            >
+              {toast.message}
+            </div>
+          ))}
         </div>
       )}
     </div>

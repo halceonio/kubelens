@@ -9,6 +9,15 @@
 - Log stream rate limiting and structured audit logging.
 - Config validation endpoint (`/api/v1/config/validate`) and UI enhancements for stream sources.
 
+## v0.0.3 - 2026-01-31
+- Per-namespace log rate limit overrides for high-traffic namespaces.
+- Metrics refresh loop with stale marking and human-friendly CPU/memory formatting.
+- CRD selector path support for custom app resources.
+- Saved-view log include/exclude regex filters.
+- Log context modal (±20 lines), timeline scrubber + jump-to-time UI.
+- Compare mode for side-by-side pod log inspection.
+- Stream reconnect + dropped-line toasts.
+
 ## v0.0.1 - 2026-01-30
 - Initial release of KubeLens MVP (read-only Kubernetes log analyzer).
 - SSE log streaming with pooled workers and optional Redis Streams fan-out.

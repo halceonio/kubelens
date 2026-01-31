@@ -56,9 +56,12 @@ const PodInspector: React.FC<PodInspectorProps> = ({ resource, onClose, config, 
     if (!val) return 0;
     const num = parseFloat(val);
     const lowVal = val.toLowerCase();
+    if (lowVal.endsWith('n')) return num / 1_000_000_000;
     if (lowVal.endsWith('m')) return num / 1000;
+    if (lowVal.endsWith('ki')) return num / 1024;
     if (lowVal.endsWith('mi')) return num;
     if (lowVal.endsWith('gi')) return num * 1024;
+    if (lowVal.endsWith('ti')) return num * 1024 * 1024;
     return num;
   };
 

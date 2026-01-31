@@ -317,7 +317,9 @@ const App: React.FC = () => {
               namespace: auto.namespace,
               labelRegex: auto.labelRegex,
               logLevel: auto.logLevel ?? 'ALL',
-              group: auto.group
+              group: auto.group,
+              logIncludeRegex: auto.logIncludeRegex,
+              logExcludeRegex: auto.logExcludeRegex
             });
           }
         }
@@ -364,7 +366,9 @@ const App: React.FC = () => {
               namespace: auto.namespace,
               labelRegex: auto.labelRegex,
               logLevel: auto.logLevel ?? 'ALL',
-              group: auto.group
+              group: auto.group,
+              logIncludeRegex: auto.logIncludeRegex,
+              logExcludeRegex: auto.logExcludeRegex
             });
           }
         }
@@ -529,6 +533,8 @@ const App: React.FC = () => {
         labelRegex: viewFilters.labelRegex,
         logLevel: viewFilters.logLevel ?? 'ALL',
         group: viewFilters.group,
+        logIncludeRegex: viewFilters.logIncludeRegex,
+        logExcludeRegex: viewFilters.logExcludeRegex,
         autoApply: false
       };
       return [...prev, next];
@@ -561,7 +567,9 @@ const App: React.FC = () => {
       namespace: view.namespace,
       labelRegex: view.labelRegex,
       logLevel: view.logLevel ?? 'ALL',
-      group: view.group
+      group: view.group,
+      logIncludeRegex: view.logIncludeRegex,
+      logExcludeRegex: view.logExcludeRegex
     });
   }, [savedViews]);
 
@@ -809,6 +817,8 @@ const App: React.FC = () => {
                     globalShowTimestamp={logViewPrefs.show_timestamp}
                     globalShowDetails={logViewPrefs.show_details}
                     globalShowMetrics={logViewPrefs.show_metrics}
+                    logIncludeRegex={viewFilters.logIncludeRegex}
+                    logExcludeRegex={viewFilters.logExcludeRegex}
                   />
                 </div>
               ))
