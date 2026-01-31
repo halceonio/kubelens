@@ -69,7 +69,7 @@ jobs:
             if lines[j].startswith("## "):
               end = j
               break
-          notes = "\\n".join(lines[start:end]).strip() + "\\n"
+          notes = "\\n".join(lines[start:end]).strip()
           Path("release_notes.md").write_text(notes)
           PY
 
