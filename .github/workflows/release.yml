@@ -15,9 +15,11 @@ env:
   DOCKER_REGISTRY: halceon
   DOCKER_ALT_REGISTRY: nudevco
   DOCKER_REPO: kubelens
+  GHCR_REGISTRY: ghcr.io
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
   release:
@@ -32,6 +34,13 @@ jobs:
 
       # - name: Checkout
       #   uses: actions/checkout@v4
+
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.GHCR_REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Resolve version
         id: version
@@ -94,3 +103,5 @@ jobs:
             ${{ env.DOCKER_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.version.outputs.value }}
             ${{ env.DOCKER_ALT_REGISTRY }}/${{ env.DOCKER_REPO }}:latest
             ${{ env.DOCKER_ALT_REGISTRY }}/${{ env.DOCKER_REPO }}:${{ steps.version.outputs.value }}
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ env.DOCKER_REPO }}:latest
+            ${{ env.GHCR_REGISTRY }}/${{ github.repository_owner }}/${{ env.DOCKER_REPO }}:${{ steps.version.outputs.value }}
