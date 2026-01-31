@@ -1,0 +1,49 @@
+{
+  "realm": "kubelens",
+  "enabled": true,
+  "groups": [
+    { "name": "k8s-logs-access" },
+    { "name": "k8s-admin-access" }
+  ],
+  "users": [
+    {
+      "username": "tester",
+      "enabled": true,
+      "email": "tester@example.com",
+      "credentials": [
+        { "type": "password", "value": "tester", "temporary": false }
+      ],
+      "groups": ["k8s-logs-access", "k8s-admin-access"]
+    }
+  ],
+  "clients": [
+    {
+      "clientId": "kubelens",
+      "name": "kubelens",
+      "enabled": true,
+      "publicClient": false,
+      "secret": "kubelens-secret",
+      "protocol": "openid-connect",
+      "directAccessGrantsEnabled": true,
+      "standardFlowEnabled": true,
+      "serviceAccountsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*"],
+      "webOrigins": ["http://localhost:3000"],
+      "protocolMappers": [
+        {
+          "name": "groups",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-group-membership-mapper",
+          "consentRequired": false,
+          "config": {
+            "full.path": "false",
+            "id.token.claim": "true",
+            "access.token.claim": "true",
+            "userinfo.token.claim": "true",
+            "claim.name": "groups"
+          }
+        }
+      ]
+    }
+  ]
+}

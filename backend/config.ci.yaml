@@ -1,0 +1,59 @@
+auth:
+  keycloak_url: "http://localhost:8081"
+  realm: "kubelens"
+  client_id: "kubelens"
+  client_secret: "kubelens-secret"
+  allowed_groups:
+    - "k8s-logs-access"
+  allowed_secrets_groups:
+    - "k8s-admin-access"
+
+logs:
+  default_tail_lines: 2000
+  max_tail_lines: 5000
+  max_line_length: 10000
+  app_stream_resync_seconds: 10
+  use_redis_streams: false
+
+storage:
+  database_url: "sqlite://./data/kubelens.sqlite"
+
+cache:
+  enabled: false
+
+kubernetes:
+  cluster_name: "kind-ci"
+  api_cache:
+    enable_informers: true
+    metadata_only: false
+    informer_resync_seconds: 30
+    pod_list_ttl_seconds: 2
+    app_list_ttl_seconds: 5
+    crd_list_ttl_seconds: 10
+    metrics_list_ttl_seconds: 5
+    metrics_refresh_seconds: 15
+    metrics_refresh_jitter_seconds: 5
+    metrics_stale_seconds: 30
+    warm_on_startup: true
+    retry_attempts: 3
+    retry_base_delay_ms: 200
+
+  allowed_namespaces:
+    - "apps"
+    - "default"
+
+  app_groups:
+    enabled: true
+    labels:
+      selector: "app.kubernetes.io/part-of"
+      name: "app.kubernetes.io/name"
+      environment: "app.kubernetes.io/env"
+      version: "app.kubernetes.io/version"
+
+  pod_filters:
+    include_regex: ".*"
+
+  app_filters:
+    include_regex: ".*"
+
+  label_prefix: "app.kubernetes.io"

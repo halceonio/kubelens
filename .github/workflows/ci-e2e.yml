@@ -1,0 +1,132 @@
+name: ci-e2e
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    runs-on: ubuntu-latest
+    env:
+      E2E_USERNAME: tester
+      E2E_PASSWORD: tester
+      E2E_BASE_URL: http://localhost:3000
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: backend/go.mod
+          cache: true
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: frontend/package.json
+
+      - name: Create kind cluster
+        uses: helm/kind-action@v1.10.0
+        with:
+          cluster_name: kubelens-ci
+
+      - name: Deploy test workloads
+        run: |
+          kubectl apply -f tests/k8s/demo.yaml
+          kubectl rollout status deployment/demo-api -n apps --timeout=120s
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Start Keycloak
+        run: |
+          docker run -d --name keycloak \
+            -p 8081:8080 \
+            -e KEYCLOAK_ADMIN=admin \
+            -e KEYCLOAK_ADMIN_PASSWORD=admin \
+            -e KC_HOSTNAME_STRICT=false \
+            -e KC_HEALTH_ENABLED=true \
+            -v "${{ github.workspace }}/tests/keycloak/realm.json:/opt/keycloak/data/import/realm.json" \
+            quay.io/keycloak/keycloak:25.0.6 \
+            start-dev --import-realm
+
+          for i in {1..60}; do
+            if curl -fsS http://localhost:8081/health/ready > /dev/null; then
+              echo "Keycloak is ready";
+              break;
+            fi
+            sleep 2
+          done
+
+      - name: Backend tests
+        run: |
+          cd backend
+          go test ./...
+
+      - name: Start backend
+        run: |
+          mkdir -p backend/data
+          nohup bash -c "cd backend && KUBELENS_CONFIG=${{ github.workspace }}/backend/config.ci.yaml KUBECONFIG=$HOME/.kube/config go run ./cmd/server" > /tmp/kubelens-backend.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://localhost:8080/healthz > /dev/null; then
+              echo "Backend is ready";
+              break;
+            fi
+            sleep 2
+          done
+
+      - name: Install frontend deps
+        run: |
+          cd frontend
+          npm install
+          npx playwright install --with-deps chromium
+
+      - name: Start frontend
+        run: |
+          nohup bash -c "cd frontend && npm run dev -- --host 0.0.0.0 --port 3000" > /tmp/kubelens-frontend.log 2>&1 &
+          for i in {1..40}; do
+            if curl -fsS http://localhost:3000 > /dev/null; then
+              echo "Frontend is ready";
+              break;
+            fi
+            sleep 2
+          done
+
+      - name: Backend API smoke
+        run: |
+          TOKEN=$(curl -fsS -X POST \
+            -H 'Content-Type: application/x-www-form-urlencoded' \
+            -d 'grant_type=password' \
+            -d 'client_id=kubelens' \
+            -d 'client_secret=kubelens-secret' \
+            -d 'username=tester' \
+            -d 'password=tester' \
+            http://localhost:8081/realms/kubelens/protocol/openid-connect/token | jq -r '.access_token')
+          if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+            echo "Failed to obtain access token"; exit 1; 
+          fi
+          curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v1/namespaces
+
+      - name: Run Playwright e2e
+        run: |
+          cd frontend
+          npm run test:e2e
+
+      - name: Upload screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-screenshots
+          path: frontend/test-results
+
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-service-logs
+          path: |
+            /tmp/kubelens-backend.log
+            /tmp/kubelens-frontend.log
