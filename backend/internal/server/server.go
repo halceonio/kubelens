@@ -50,15 +50,22 @@ func New(cfg *config.Config, verifier auth.VerifierProvider, client *kubernetes.
 	authHandler := api.NewAuthHandler(configProvider)
 	authConfigHandler := api.NewAuthConfigHandler(configProvider)
 	configHandler := api.NewConfigHandler(configProvider)
+	configValidateHandler := api.NewConfigValidateHandler(configProvider)
 	mux.Handle("/api/v1/session", auth.Middleware(verifier)(sessionHandler))
 	mux.Handle("/api/v1/auth/token", authHandler)
 	mux.Handle("/api/v1/auth/config", authConfigHandler)
 	mux.Handle("/api/v1/config", auth.Middleware(verifier)(configHandler))
+	mux.Handle("/api/v1/config/validate", auth.Middleware(verifier)(configValidateHandler))
 	mux.Handle("/api/v1/metrics", api.MetricsHandler(func() *api.ResourceStats {
 		if s.kubeImpl == nil {
 			return nil
 		}
 		return s.kubeImpl.Stats()
+	}, func() *api.LogStreamStats {
+		if s.kubeImpl == nil {
+			return nil
+		}
+		return s.kubeImpl.LogStats()
 	}))
 
 	kubeImpl := api.NewKubeHandler(cfg, client, meta)

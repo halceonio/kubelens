@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/metadata"
 
+	"github.com/halceonio/kubelens/backend/internal/auth"
 	"github.com/halceonio/kubelens/backend/internal/config"
 )
 
@@ -37,6 +38,7 @@ type KubeHandler struct {
 	statsStop  chan struct{}
 	metaClient metadata.Interface
 	logHub     *logStreamHub
+	logLimiter *logLimiter
 }
 
 func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metadata.Interface) *KubeHandler {
@@ -46,6 +48,7 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 	crdTTL := time.Duration(apiCache.CRDListTTLSeconds) * time.Second
 	retryBase := time.Duration(apiCache.RetryBaseDelayMillis) * time.Millisecond
 	stats := newResourceStats()
+	limiter := newLogLimiter(cfg.Logs.RateLimitPerMinute, cfg.Logs.RateLimitBurst)
 	handler := &KubeHandler{
 		cfg:        cfg,
 		client:     client,
@@ -57,6 +60,7 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 		stats:      stats,
 		statsStop:  make(chan struct{}),
 		metaClient: meta,
+		logLimiter: limiter,
 	}
 	handler.logHub = newLogStreamHub(handler)
 	handler.appStreams = newAppStreamPool(handler)
@@ -89,6 +93,14 @@ func (h *KubeHandler) Stats() *ResourceStats {
 		return nil
 	}
 	return h.stats
+}
+
+func (h *KubeHandler) LogStats() *LogStreamStats {
+	if h == nil || h.logHub == nil {
+		return nil
+	}
+	stats := h.logHub.Stats()
+	return &stats
 }
 
 func (h *KubeHandler) startStatsLogger() {
@@ -147,6 +159,16 @@ func (h *KubeHandler) streamPodLogs(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
+	if !h.allowLogRequest(r, namespace) {
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "log rate limit exceeded")
+		return
+	}
+
+	h.audit(r, "pod_logs", namespace, name, map[string]any{
+		"container": r.URL.Query().Get("container"),
+	})
+
 	req := parseLogRequest(r, h.cfg)
 	sub, replay, unsubscribe, err := h.logHub.SubscribePod(r.Context(), namespace, name, req.container, req.tail, req.resume)
 	if err != nil {
@@ -203,9 +225,16 @@ func (h *KubeHandler) streamPodLogs(w http.ResponseWriter, r *http.Request, name
 			}
 			flusher.Flush()
 		case <-statsTicker.C:
+			if status, ok := h.logHub.Status(namespace, name, req.container); ok {
+				event := newJSONEvent("status", status)
+				if err := writeSSEEvent(w, event); err != nil {
+					return
+				}
+			}
 			stats := streamStats{
 				Dropped:  sub.dropped.Load(),
 				Buffered: len(sub.ch),
+				Sources:  1,
 			}
 			event := newJSONEvent("stats", stats)
 			if err := writeSSEEvent(w, event); err != nil {
@@ -256,6 +285,16 @@ func (h *KubeHandler) streamAppLogs(w http.ResponseWriter, r *http.Request, name
 		writeError(w, http.StatusInternalServerError, "streaming unsupported")
 		return
 	}
+
+	if !h.allowLogRequest(r, namespace) {
+		w.Header().Set("Retry-After", "60")
+		writeError(w, http.StatusTooManyRequests, "log rate limit exceeded")
+		return
+	}
+
+	h.audit(r, "app_logs", namespace, name, map[string]any{
+		"container": r.URL.Query().Get("container"),
+	})
 
 	opts := h.buildLogOptions(r)
 	sub, unsubscribe, err := h.appStreams.subscribe(r.Context(), namespace, name, opts)
@@ -401,6 +440,23 @@ func parseLogTime(raw string) (time.Time, bool) {
 		return parsed, true
 	}
 	return time.Time{}, false
+}
+
+func (h *KubeHandler) allowLogRequest(r *http.Request, namespace string) bool {
+	if h == nil || h.logLimiter == nil {
+		return true
+	}
+	key := namespace
+	if user, ok := auth.UserFromContext(r.Context()); ok && user != nil {
+		key = user.Subject + "|" + namespace
+	} else if r != nil {
+		key = remoteIP(r) + "|" + namespace
+	}
+	allowed := h.logLimiter.Allow(key)
+	if !allowed {
+		h.audit(r, "log_rate_limited", namespace, "", nil)
+	}
+	return allowed
 }
 
 func (h *KubeHandler) buildLogOptions(r *http.Request) *corev1.PodLogOptions {

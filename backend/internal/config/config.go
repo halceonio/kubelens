@@ -26,6 +26,7 @@ type ServerConfig struct {
 	ReadTimeoutSeconds  int    `yaml:"read_timeout_seconds"`
 	WriteTimeoutSeconds int    `yaml:"write_timeout_seconds"`
 	IdleTimeoutSeconds  int    `yaml:"idle_timeout_seconds"`
+	AuditLogs           bool   `yaml:"audit_logs"`
 }
 
 type AuthConfig struct {
@@ -53,6 +54,8 @@ type LogsConfig struct {
 	RedisStreamBlockMillis int    `yaml:"redis_stream_block_millis"`
 	RedisLockTTLSeconds    int    `yaml:"redis_lock_ttl_seconds"`
 	RedisURLOverride       string `yaml:"redis_url"`
+	RateLimitPerMinute     int    `yaml:"rate_limit_per_minute"`
+	RateLimitBurst         int    `yaml:"rate_limit_burst"`
 }
 
 type SessionConfig struct {
@@ -69,15 +72,26 @@ type CacheConfig struct {
 }
 
 type KubernetesConfig struct {
-	ClusterName       string          `yaml:"cluster_name"`
-	TerminatedLogTTL  int             `yaml:"terminated_log_ttl"`
-	API               KubernetesAPI   `yaml:"api"`
-	APICache          KubernetesCache `yaml:"api_cache"`
-	AllowedNamespaces []string        `yaml:"allowed_namespaces"`
-	AppGroups         AppGroupsConfig `yaml:"app_groups"`
-	PodFilters        ResourceFilters `yaml:"pod_filters"`
-	AppFilters        ResourceFilters `yaml:"app_filters"`
-	LabelPrefix       string          `yaml:"label_prefix"`
+	ClusterName       string                 `yaml:"cluster_name"`
+	TerminatedLogTTL  int                    `yaml:"terminated_log_ttl"`
+	API               KubernetesAPI          `yaml:"api"`
+	APICache          KubernetesCache        `yaml:"api_cache"`
+	AllowedNamespaces []string               `yaml:"allowed_namespaces"`
+	AppGroups         AppGroupsConfig        `yaml:"app_groups"`
+	PodFilters        ResourceFilters        `yaml:"pod_filters"`
+	AppFilters        ResourceFilters        `yaml:"app_filters"`
+	LabelPrefix       string                 `yaml:"label_prefix"`
+	CustomResources   []CustomResourceConfig `yaml:"custom_resources"`
+}
+
+type CustomResourceConfig struct {
+	Name        string `yaml:"name"`
+	Group       string `yaml:"group"`
+	Version     string `yaml:"version"`
+	Resource    string `yaml:"resource"`
+	Kind        string `yaml:"kind"`
+	Enabled     bool   `yaml:"enabled"`
+	PodLabelKey string `yaml:"pod_label_key"`
 }
 
 type KubernetesAPI struct {

@@ -59,6 +59,7 @@ type podState struct {
 type streamStats struct {
 	Dropped  int64 `json:"dropped"`
 	Buffered int   `json:"buffered"`
+	Sources  int   `json:"sources"`
 }
 
 type streamMarker struct {
@@ -393,10 +394,12 @@ func (s *appStream) broadcastEvent(event sseEvent) {
 
 func (s *appStream) broadcastStats() {
 	s.mu.Lock()
+	sources := len(s.activePods)
 	for _, sub := range s.subscribers {
 		stats := streamStats{
 			Dropped:  sub.dropped.Load(),
 			Buffered: len(sub.ch),
+			Sources:  sources,
 		}
 		event := newJSONEvent("stats", stats)
 		select {

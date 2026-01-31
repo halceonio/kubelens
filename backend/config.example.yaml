@@ -3,6 +3,7 @@ server:
   read_timeout_seconds: 10
   write_timeout_seconds: 0
   idle_timeout_seconds: 60
+  audit_logs: true
 
 auth:
   keycloak_url: "https://keycloak.enterprise.com"
@@ -29,6 +30,8 @@ logs:
   redis_stream_block_millis: 2000
   redis_lock_ttl_seconds: 15
   redis_url: ""
+  rate_limit_per_minute: 120
+  rate_limit_burst: 240
 
 session:
   max_bytes: 262144
@@ -77,3 +80,18 @@ kubernetes:
       - "component=istio"
       - "heritage=Helm"
   label_prefix: "logger.app.enterprise.com"
+  custom_resources:
+    - name: "cnpg"
+      group: "postgresql.cnpg.io"
+      version: "v1"
+      resource: "clusters"
+      kind: "Cluster"
+      enabled: true
+      pod_label_key: "cnpg.io/cluster"
+    - name: "dragonfly"
+      group: "dragonflydb.io"
+      version: "v1alpha1"
+      resource: "dragonflies"
+      kind: "Dragonfly"
+      enabled: true
+      pod_label_key: "app"

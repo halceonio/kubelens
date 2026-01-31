@@ -20,6 +20,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/halceonio/kubelens/backend/internal/auth"
+	"github.com/halceonio/kubelens/backend/internal/config"
 )
 
 type namespaceResponse struct {
@@ -201,6 +202,7 @@ func (h *KubeHandler) handlePodsList(w http.ResponseWriter, r *http.Request, nam
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	h.audit(r, "pods_list", namespace, "", nil)
 	light := wantsLight(r)
 	metadataOnly := light && h.cfg.Kubernetes.APICache.MetadataOnly && h.metaClient != nil
 	if metadataOnly {
@@ -243,6 +245,7 @@ func (h *KubeHandler) handlePodGet(w http.ResponseWriter, r *http.Request, names
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	h.audit(r, "pod_get", namespace, name, nil)
 	pod, err := h.client.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -264,6 +267,7 @@ func (h *KubeHandler) handlePodDetails(w http.ResponseWriter, r *http.Request, n
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	h.audit(r, "pod_details", namespace, name, nil)
 	pod, err := h.client.CoreV1().Pods(namespace).Get(r.Context(), name, metav1.GetOptions{})
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
@@ -286,6 +290,7 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	h.audit(r, "apps_list", namespace, "", nil)
 	ctx := r.Context()
 	resp := []appResponse{}
 	light := wantsLight(r)
@@ -424,6 +429,20 @@ func (h *KubeHandler) handleAppsList(w http.ResponseWriter, r *http.Request, nam
 		}
 	}
 
+	for _, crd := range h.enabledCustomResources() {
+		items, err := h.listCustomResourcesMetadataCached(ctx, namespace, crd)
+		if err != nil {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
+		for _, item := range items {
+			if !h.allowApp(item.Name, item.Labels) {
+				continue
+			}
+			resp = append(resp, h.mapCustomResourceMetadata(crd, item))
+		}
+	}
+
 	writeJSON(w, resp)
 }
 
@@ -432,6 +451,7 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
 	}
+	h.audit(r, "app_get", namespace, name, nil)
 	ctx := r.Context()
 	var user *auth.User
 	if u, ok := auth.UserFromContext(r.Context()); ok {
@@ -490,6 +510,22 @@ func (h *KubeHandler) handleAppGet(w http.ResponseWriter, r *http.Request, names
 	if err != nil && !apierrors.IsNotFound(err) {
 		writeError(w, http.StatusBadGateway, err.Error())
 		return
+	}
+
+	for _, crd := range h.enabledCustomResources() {
+		meta, err := h.getCustomResourceMetadata(ctx, namespace, crd, name)
+		if err == nil && meta != nil {
+			if !h.allowApp(meta.Name, meta.Labels) {
+				writeError(w, http.StatusForbidden, "app not allowed")
+				return
+			}
+			writeJSON(w, h.mapCustomResourceMetadata(crd, *meta))
+			return
+		}
+		if err != nil && !apierrors.IsNotFound(err) {
+			writeError(w, http.StatusBadGateway, err.Error())
+			return
+		}
 	}
 
 	writeError(w, http.StatusNotFound, "app not found")
@@ -979,6 +1015,42 @@ func (h *KubeHandler) mapDragonflyMetadata(meta metav1.PartialObjectMetadata) ap
 		Light:         true,
 		MetadataOnly:  true,
 	}
+}
+
+func (h *KubeHandler) mapCustomResourceMetadata(crd config.CustomResourceConfig, meta metav1.PartialObjectMetadata) appResponse {
+	kind := crd.Kind
+	if kind == "" {
+		kind = "CustomResource"
+	}
+	return appResponse{
+		Name:          meta.Name,
+		Namespace:     meta.Namespace,
+		Type:          kind,
+		Replicas:      0,
+		ReadyReplicas: 0,
+		PodNames:      []string{},
+		Labels:        meta.Labels,
+		Annotations:   meta.Annotations,
+		Env:           map[string]string{},
+		EnvSecrets:    []string{},
+		Resources:     resourceUsage{},
+		Volumes:       []volumeMountResponse{},
+		Secrets:       []string{},
+		ConfigMaps:    []string{},
+		Image:         "",
+		Light:         true,
+		MetadataOnly:  true,
+	}
+}
+
+func (h *KubeHandler) enabledCustomResources() []config.CustomResourceConfig {
+	out := []config.CustomResourceConfig{}
+	for _, crd := range h.cfg.Kubernetes.CustomResources {
+		if crd.Enabled {
+			out = append(out, crd)
+		}
+	}
+	return out
 }
 
 func (h *KubeHandler) listPodsForLabel(ctx context.Context, namespace, selector string) ([]string, int32) {
@@ -1537,6 +1609,64 @@ func (h *KubeHandler) listDragonflyMetadata(ctx context.Context, namespace strin
 	return list.Items, nil
 }
 
+func (h *KubeHandler) listCustomResourcesMetadataCached(ctx context.Context, namespace string, crd config.CustomResourceConfig) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	key := fmt.Sprintf("%s|%s", namespace, customResourceKey(crd))
+	if h.cache != nil {
+		return h.cache.doMetaCustom(key, func() ([]metav1.PartialObjectMetadata, error) {
+			if items, ok := h.cache.getMetaCustom(key); ok {
+				return items, nil
+			}
+			items, err := h.listCustomResourcesMetadata(ctx, namespace, crd)
+			if err != nil {
+				return nil, err
+			}
+			h.cache.setMetaCustom(key, items)
+			return items, nil
+		})
+	}
+	return h.listCustomResourcesMetadata(ctx, namespace, crd)
+}
+
+func (h *KubeHandler) listCustomResourcesMetadata(ctx context.Context, namespace string, crd config.CustomResourceConfig) ([]metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Group: crd.Group, Version: crd.Version, Resource: crd.Resource}
+	list, err := h.metaClient.Resource(gvr).Namespace(namespace).List(ctx, metav1.ListOptions{})
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			return []metav1.PartialObjectMetadata{}, nil
+		}
+		return nil, err
+	}
+	if list == nil {
+		return []metav1.PartialObjectMetadata{}, nil
+	}
+	return list.Items, nil
+}
+
+func (h *KubeHandler) getCustomResourceMetadata(ctx context.Context, namespace string, crd config.CustomResourceConfig, name string) (*metav1.PartialObjectMetadata, error) {
+	if h.metaClient == nil {
+		return nil, errors.New("metadata client unavailable")
+	}
+	gvr := schema.GroupVersionResource{Group: crd.Group, Version: crd.Version, Resource: crd.Resource}
+	meta, err := h.metaClient.Resource(gvr).Namespace(namespace).Get(ctx, name, metav1.GetOptions{})
+	if err != nil {
+		return nil, err
+	}
+	return meta, nil
+}
+
+func customResourceKey(crd config.CustomResourceConfig) string {
+	if crd.Name != "" {
+		return crd.Name
+	}
+	return fmt.Sprintf("%s/%s/%s", crd.Group, crd.Version, crd.Resource)
+}
+
 func (h *KubeHandler) podNamesForSelector(ctx context.Context, namespace string, selector *metav1.LabelSelector, podSnapshot []corev1.Pod) []string {
 	if podSnapshot != nil {
 		return h.filterPodsBySelector(podSnapshot, selector)
@@ -2064,6 +2194,16 @@ func selectorString(selector *metav1.LabelSelector) string {
 }
 
 func (h *KubeHandler) appSelector(ctx context.Context, namespace, name string) (string, error) {
+	for _, crd := range h.enabledCustomResources() {
+		if crd.PodLabelKey == "" {
+			continue
+		}
+		meta, err := h.getCustomResourceMetadata(ctx, namespace, crd, name)
+		if err == nil && meta != nil && meta.Name == name {
+			return fmt.Sprintf("%s=%s", crd.PodLabelKey, name), nil
+		}
+	}
+
 	if clusters, err := h.listCnpgClustersCached(ctx, namespace); err == nil {
 		for _, cluster := range clusters {
 			if cluster.Metadata.Name == name {

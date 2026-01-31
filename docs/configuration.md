@@ -38,6 +38,37 @@ logs:
 When enabled, each pod/container log stream is handled by a single leader that writes to Redis, while other replicas read and fan out to their subscribers. This reduces upstream Kubernetes log streams and improves team-scale usage.
 The in-process log worker also maintains a ring buffer (default 10k lines) to support fast replay for reconnecting clients.
 
+## Log stream rate limiting
+To avoid excessive log stream opens per user/namespace:
+```yaml
+logs:
+  rate_limit_per_minute: 120
+  rate_limit_burst: 240
+```
+Limits apply per user + namespace and return `429` when exceeded.
+
+## Audit logging
+Enable structured audit logs for key actions (logs, reads, lists):
+```yaml
+server:
+  audit_logs: true
+```
+
+## Custom resources
+You can add additional CRDs to the Apps view via config:
+```yaml
+kubernetes:
+  custom_resources:
+    - name: "cnpg"
+      group: "postgresql.cnpg.io"
+      version: "v1"
+      resource: "clusters"
+      kind: "Cluster"
+      enabled: true
+      pod_label_key: "cnpg.io/cluster"
+```
+`pod_label_key` is optional but required for log streaming to work for the CRD.
+
 ## API cache modes
 The API cache supports an optional metadata-only list mode to reduce API server load:
 ```yaml
@@ -50,6 +81,11 @@ When enabled, list endpoints return `metadataOnly: true` resources with minimal 
 Cache metrics are exposed at:
 ```
 GET /api/v1/metrics
+```
+
+Configuration validation is available at:
+```
+GET /api/v1/config/validate
 ```
 
 ## SSE timeouts

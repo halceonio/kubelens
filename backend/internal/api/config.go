@@ -36,6 +36,12 @@ type LogsResponse struct {
 	MaxLineLength    int `json:"max_line_length"`
 }
 
+type ConfigValidationResponse struct {
+	Valid    bool     `json:"valid"`
+	Errors   []string `json:"errors"`
+	Warnings []string `json:"warnings"`
+}
+
 func NewConfigHandler(getConfig func() *config.Config) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
@@ -71,6 +77,29 @@ func NewConfigHandler(getConfig func() *config.Config) http.HandlerFunc {
 			},
 		}
 
+		writeJSON(w, resp)
+	}
+}
+
+func NewConfigValidateHandler(getConfig func() *config.Config) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
+
+		cfg := getConfig()
+		if cfg == nil {
+			writeError(w, http.StatusServiceUnavailable, "config unavailable")
+			return
+		}
+
+		result := config.Validate(cfg)
+		resp := ConfigValidationResponse{
+			Valid:    len(result.Errors) == 0,
+			Errors:   result.Errors,
+			Warnings: result.Warnings,
+		}
 		writeJSON(w, resp)
 	}
 }

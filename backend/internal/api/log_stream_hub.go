@@ -76,6 +76,8 @@ type logStream struct {
 	redisCancel context.CancelFunc
 	lastRedisID string
 	seq         atomic.Uint64
+	lastEventAt atomic.Int64
+	reconnects  atomic.Int64
 	startSince  *time.Time
 }
 
@@ -91,6 +93,27 @@ type logBuffer struct {
 	maxBytes   int
 	entries    []logEntry
 	bytes      int
+}
+
+type logStreamStatus struct {
+	Role          string `json:"role"`
+	RedisEnabled  bool   `json:"redis_enabled"`
+	Leader        bool   `json:"leader"`
+	Reconnects    int64  `json:"reconnects"`
+	LastEventAt   string `json:"last_event_at"`
+	LagMillis     int64  `json:"lag_ms"`
+	Subscribers   int    `json:"subscribers"`
+	BufferedLines int    `json:"buffered_lines"`
+	BufferBytes   int    `json:"buffer_bytes"`
+}
+
+type LogStreamStats struct {
+	ActiveStreams      int
+	ActiveSubscribers  int
+	DroppedTotal       int64
+	BufferedLinesTotal int
+	BufferBytesTotal   int
+	Leaders            int
 }
 
 func newLogStreamHub(handler *KubeHandler) *logStreamHub {
@@ -176,6 +199,46 @@ func (h *logStreamHub) stop() {
 	if h.redis != nil {
 		_ = h.redis.Close()
 	}
+}
+
+func (h *logStreamHub) Stats() LogStreamStats {
+	if h == nil {
+		return LogStreamStats{}
+	}
+	h.mu.Lock()
+	streams := make([]*logStream, 0, len(h.streams))
+	for _, stream := range h.streams {
+		streams = append(streams, stream)
+	}
+	h.mu.Unlock()
+
+	stats := LogStreamStats{}
+	for _, stream := range streams {
+		snap := stream.snapshotStats()
+		stats.ActiveStreams++
+		stats.ActiveSubscribers += snap.subscribers
+		stats.DroppedTotal += snap.dropped
+		stats.BufferedLinesTotal += snap.bufferedLines
+		stats.BufferBytesTotal += snap.bufferBytes
+		if snap.leader {
+			stats.Leaders++
+		}
+	}
+	return stats
+}
+
+func (h *logStreamHub) Status(namespace, pod, container string) (logStreamStatus, bool) {
+	if h == nil {
+		return logStreamStatus{}, false
+	}
+	key := h.streamKey(namespace, pod, container)
+	h.mu.Lock()
+	stream, ok := h.streams[key]
+	h.mu.Unlock()
+	if !ok {
+		return logStreamStatus{}, false
+	}
+	return stream.statusSnapshot(), true
 }
 
 func (h *logStreamHub) SubscribePod(ctx context.Context, namespace, pod, container string, tail int64, resume logResume) (*logSubscriber, []logEntry, func(), error) {
@@ -423,6 +486,7 @@ func (s *logStream) consumeK8s(ctx context.Context) {
 		for {
 			line, err := reader.ReadString('\n')
 			if err != nil {
+				s.reconnects.Add(1)
 				_ = stream.Close()
 				break
 			}
@@ -447,6 +511,7 @@ func (s *logStream) ingestK8sEntry(ctx context.Context, entry logEntry) {
 	seq := s.seq.Add(1)
 	entry.Seq = seq
 	entry.ID = strconv.FormatUint(seq, 10)
+	s.lastEventAt.Store(time.Now().UTC().UnixNano())
 	if s.hub.redisEnabled {
 		id, err := s.addRedisEntry(ctx, entry)
 		if err != nil {
@@ -485,6 +550,7 @@ func (s *logStream) consumeRedis(ctx context.Context) {
 		}
 		res, err := s.hub.redis.XRead(ctx, args).Result()
 		if err != nil && !errors.Is(err, context.Canceled) && err != redis.Nil {
+			s.reconnects.Add(1)
 			time.Sleep(time.Second)
 			continue
 		}
@@ -498,6 +564,7 @@ func (s *logStream) consumeRedis(ctx context.Context) {
 					continue
 				}
 				s.lastRedisID = msg.ID
+				s.lastEventAt.Store(time.Now().UTC().UnixNano())
 				s.buffer.append(entry)
 				s.broadcast(entry)
 			}
@@ -615,6 +682,66 @@ func (s *logStream) replay(ctx context.Context, resume logResume, tail int64) []
 	return nil
 }
 
+type streamSnapshot struct {
+	subscribers   int
+	dropped       int64
+	bufferedLines int
+	bufferBytes   int
+	leader        bool
+}
+
+func (s *logStream) snapshotStats() streamSnapshot {
+	s.mu.Lock()
+	subs := len(s.subscribers)
+	dropped := int64(0)
+	for _, sub := range s.subscribers {
+		dropped += sub.dropped.Load()
+	}
+	s.mu.Unlock()
+	lines, bytes := s.buffer.snapshot()
+	return streamSnapshot{
+		subscribers:   subs,
+		dropped:       dropped,
+		bufferedLines: lines,
+		bufferBytes:   bytes,
+		leader:        s.leader,
+	}
+}
+
+func (s *logStream) statusSnapshot() logStreamStatus {
+	s.mu.Lock()
+	subs := len(s.subscribers)
+	s.mu.Unlock()
+	lines, bytes := s.buffer.snapshot()
+	last := s.lastEventAt.Load()
+	lastAt := ""
+	lagMs := int64(0)
+	if last > 0 {
+		lastTime := time.Unix(0, last).UTC()
+		lastAt = lastTime.Format(time.RFC3339Nano)
+		lagMs = time.Since(lastTime).Milliseconds()
+	}
+	role := "single"
+	if s.hub.redisEnabled {
+		if s.leader {
+			role = "leader"
+		} else {
+			role = "follower"
+		}
+	}
+	return logStreamStatus{
+		Role:          role,
+		RedisEnabled:  s.hub.redisEnabled,
+		Leader:        s.leader,
+		Reconnects:    s.reconnects.Load(),
+		LastEventAt:   lastAt,
+		LagMillis:     lagMs,
+		Subscribers:   subs,
+		BufferedLines: lines,
+		BufferBytes:   bytes,
+	}
+}
+
 func (s *logStream) broadcast(entry logEntry) {
 	s.mu.Lock()
 	for _, sub := range s.subscribers {
@@ -673,6 +800,12 @@ func (b *logBuffer) append(entry logEntry) {
 		b.entries = b.entries[1:]
 		b.bytes -= estimateEntrySize(removed)
 	}
+}
+
+func (b *logBuffer) snapshot() (int, int) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	return len(b.entries), b.bytes
 }
 
 func (b *logBuffer) tail(count int) []logEntry {
