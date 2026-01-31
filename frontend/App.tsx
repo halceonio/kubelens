@@ -1,5 +1,5 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import Sidebar from './components/Sidebar';
 import LogView from './components/LogView';
 import PodInspector from './components/PodInspector';
@@ -49,6 +49,8 @@ const App: React.FC = () => {
     show_details: true,
     show_metrics: false
   });
+  const [isActionsOpen, setIsActionsOpen] = useState(false);
+  const actionsRef = useRef<HTMLDivElement | null>(null);
 
   // Apply theme to document
   useEffect(() => {
@@ -175,9 +177,15 @@ const App: React.FC = () => {
       localStorage.setItem(STORAGE_KEY_ACTIVE, JSON.stringify(identifiers));
     }
     
-    // Update URL hash for linkability
+    // Update URL hash for linkability while preserving other params (e.g. focus)
     const hash = identifiers.map(i => `${i.type}:${i.namespace}:${i.name}`).join(',');
-    window.location.hash = hash ? `view=${hash}` : '';
+    const params = new URLSearchParams(window.location.hash.substring(1));
+    if (hash) {
+      params.set('view', hash);
+    } else {
+      params.delete('view');
+    }
+    window.location.hash = params.toString();
   }, [activeResources, isRestoring, sessionToken]);
 
   // Persist pinned (fallback when no session token)
@@ -201,6 +209,16 @@ const App: React.FC = () => {
       localStorage.setItem(STORAGE_KEY_LOG_VIEW, JSON.stringify(logViewPrefs));
     }
   }, [savedViews, viewFilters, activeViewId, logViewPrefs, sessionToken]);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (actionsRef.current && !actionsRef.current.contains(event.target as Node)) {
+        setIsActionsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
 
   useEffect(() => {
     if (isRestoring || !sessionToken) return;
@@ -275,14 +293,28 @@ const App: React.FC = () => {
         if (typeof remoteSession.sidebar_open === 'boolean') {
           setIsSidebarOpen(remoteSession.sidebar_open);
         }
-        if (Array.isArray(remoteSession.saved_views)) {
-          setSavedViews(remoteSession.saved_views);
+        const nextSavedViews = Array.isArray(remoteSession.saved_views) ? remoteSession.saved_views : [];
+        if (nextSavedViews.length > 0) {
+          setSavedViews(nextSavedViews);
         }
         if (remoteSession.view_filters) {
           setViewFilters({ logLevel: 'ALL', ...remoteSession.view_filters });
         }
-        if (typeof remoteSession.active_view_id === 'string' || remoteSession.active_view_id === null) {
-          setActiveViewId(remoteSession.active_view_id ?? null);
+        const activeId = (typeof remoteSession.active_view_id === 'string' || remoteSession.active_view_id === null)
+          ? (remoteSession.active_view_id ?? null)
+          : null;
+        setActiveViewId(activeId);
+        if (!activeId && nextSavedViews.length > 0) {
+          const auto = nextSavedViews.find(v => v.autoApply);
+          if (auto) {
+            setActiveViewId(auto.id);
+            setViewFilters({
+              namespace: auto.namespace,
+              labelRegex: auto.labelRegex,
+              logLevel: auto.logLevel ?? 'ALL',
+              group: auto.group
+            });
+          }
         }
         if (remoteSession.log_view) {
           setLogViewPrefs(prev => ({ ...prev, ...remoteSession.log_view }));
@@ -297,9 +329,11 @@ const App: React.FC = () => {
           }
         }
         const savedViewsLocal = localStorage.getItem(STORAGE_KEY_SAVED_VIEWS);
+        let localViews: SavedView[] = [];
         if (savedViewsLocal) {
           try {
-            setSavedViews(JSON.parse(savedViewsLocal));
+            localViews = JSON.parse(savedViewsLocal);
+            setSavedViews(localViews);
           } catch (e) {
             console.error("Failed to parse saved views", e);
           }
@@ -313,8 +347,21 @@ const App: React.FC = () => {
           }
         }
         const savedActiveView = localStorage.getItem(STORAGE_KEY_ACTIVE_VIEW);
-        if (savedActiveView) {
-          setActiveViewId(savedActiveView || null);
+        const activeIdLocal = savedActiveView ? (savedActiveView || null) : null;
+        if (activeIdLocal !== null) {
+          setActiveViewId(activeIdLocal);
+        }
+        if (!activeIdLocal && localViews.length > 0) {
+          const auto = localViews.find((v: SavedView) => v.autoApply);
+          if (auto) {
+            setActiveViewId(auto.id);
+            setViewFilters({
+              namespace: auto.namespace,
+              labelRegex: auto.labelRegex,
+              logLevel: auto.logLevel ?? 'ALL',
+              group: auto.group
+            });
+          }
         }
         const savedLogView = localStorage.getItem(STORAGE_KEY_LOG_VIEW);
         if (savedLogView) {
@@ -384,6 +431,18 @@ const App: React.FC = () => {
     setActiveResources(prev => prev.filter(p => p.name !== name));
   }, []);
 
+  const closeAllResources = useCallback(() => {
+    setActiveResources([]);
+  }, []);
+
+  const closeInactiveResources = useCallback(() => {
+    setActiveResources(prev => prev.slice(0, maxPanes));
+  }, [maxPanes]);
+
+  const closeUnpinnedResources = useCallback(() => {
+    setActiveResources(prev => prev.filter(res => pinnedResources.some(p => p.name === res.name && p.namespace === res.namespace)));
+  }, [pinnedResources]);
+
   const togglePin = useCallback((id: ResourceIdentifier) => {
     setPinnedResources(prev => {
       const exists = prev.some(p => p.type === id.type && p.namespace === id.namespace && p.name === id.name);
@@ -435,11 +494,31 @@ const App: React.FC = () => {
         name: trimmed,
         namespace: viewFilters.namespace,
         labelRegex: viewFilters.labelRegex,
-        logLevel: viewFilters.logLevel ?? 'ALL'
+        logLevel: viewFilters.logLevel ?? 'ALL',
+        group: viewFilters.group,
+        autoApply: false
       };
       return [...prev, next];
     });
   }, [viewFilters]);
+
+  const handleUpdateView = useCallback((id: string, updates: Partial<SavedView>) => {
+    setSavedViews(prev => prev.map(view => view.id === id ? { ...view, ...updates } : view));
+  }, []);
+
+  const handleDeleteView = useCallback((id: string) => {
+    setSavedViews(prev => prev.filter(view => view.id !== id));
+    if (activeViewId === id) {
+      setActiveViewId(null);
+    }
+  }, [activeViewId]);
+
+  const handleSetAutoApply = useCallback((id: string | null) => {
+    setSavedViews(prev => prev.map(view => ({
+      ...view,
+      autoApply: id !== null && view.id === id
+    })));
+  }, []);
 
   const handleApplyView = useCallback((viewId: string | null) => {
     setActiveViewId(viewId);
@@ -448,7 +527,8 @@ const App: React.FC = () => {
     setViewFilters({
       namespace: view.namespace,
       labelRegex: view.labelRegex,
-      logLevel: view.logLevel ?? 'ALL'
+      logLevel: view.logLevel ?? 'ALL',
+      group: view.group
     });
   }, [savedViews]);
 
@@ -484,6 +564,9 @@ const App: React.FC = () => {
           onSaveView={handleSaveView}
           onApplyView={handleApplyView}
           onUpdateViewFilters={handleUpdateViewFilters}
+          onUpdateView={handleUpdateView}
+          onDeleteView={handleDeleteView}
+          onSetAutoApplyView={handleSetAutoApply}
         />
 
         <main className="flex-1 flex flex-col relative overflow-hidden">
@@ -532,6 +615,49 @@ const App: React.FC = () => {
             </div>
             
             <div className="flex items-center gap-2 md:gap-4 ml-4 shrink-0">
+              <div className="relative" ref={actionsRef}>
+                <button
+                  onClick={() => setIsActionsOpen(prev => !prev)}
+                  className="p-2 text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-all shadow-sm"
+                  title="Stream actions"
+                >
+                  <svg className="w-4 h-4 md:w-5 md:h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 6h.01M12 12h.01M12 18h.01" />
+                  </svg>
+                </button>
+                {isActionsOpen && (
+                  <div className="absolute right-0 mt-2 w-40 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-700 rounded-lg shadow-xl z-20 overflow-hidden">
+                    <button
+                      onClick={() => {
+                        closeAllResources();
+                        setIsActionsOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Close all
+                    </button>
+                    <button
+                      onClick={() => {
+                        closeInactiveResources();
+                        setIsActionsOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Close inactive
+                    </button>
+                    <button
+                      onClick={() => {
+                        closeUnpinnedResources();
+                        setIsActionsOpen(false);
+                      }}
+                      className="w-full text-left px-3 py-2 text-[11px] text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800"
+                    >
+                      Close unpinned
+                    </button>
+                  </div>
+                )}
+              </div>
+
               <button 
                 onClick={toggleTheme}
                 className="p-2 text-slate-400 hover:text-sky-500 dark:hover:text-sky-400 rounded-lg bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 transition-all shadow-sm group"

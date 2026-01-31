@@ -11,7 +11,11 @@ Many enterprise teams need quick insight into application behavior but should no
 - Multi-pane log dashboard (up to 4 concurrent streams) with SSE streaming
 - Shared log workers with optional Redis Streams for multi-replica fan-out
 - Virtualized log rendering for high-volume streams
-- Log level filtering, regex search, auto-scroll, and line wrapping
+- Log level filtering, global search with highlight/jump, auto-scroll, and line wrapping
+- Saved views (namespace + label/regex + level + group) persisted per user
+- Stream health indicator (live/reconnecting/stale) with backpressure stats
+- Pod lifecycle markers inline (pod added/removed/ready/restart)
+- Per-stream container switcher and global log view preferences
 - Pod inspector for env/config/secrets (masked) and resource limits/usage
 - App grouping via custom labels, namespace allowlist, and pinned resources
 - Keycloak SSO with RBAC gate on `k8s-logs-access`
@@ -44,7 +48,7 @@ export KUBECONFIG=~/.kube/config
 2) Configure the frontend:
 ```bash
 cp frontend/.env.example frontend/.env
-# Set VITE_KEYCLOAK_URL, VITE_KEYCLOAK_REALM, VITE_KEYCLOAK_CLIENT_ID
+# Optional: set VITE_KEYCLOAK_* overrides for local testing (backend auth config is preferred)
 ```
 3) Run both services:
 ```bash
@@ -145,6 +149,8 @@ kubernetes:
 - Set `kubernetes.api_cache.metadata_only: true` to return lightweight metadata lists (full details are fetched on demand).
 - Prometheus-style cache metrics are exposed at `GET /api/v1/metrics`.
 - Shared log workers can be enabled with `logs.use_redis_streams: true` (requires `cache.redis_url` or `logs.redis_url`).
+- Configure log rate limits with `logs.rate_limit_per_minute` and `logs.rate_limit_burst`.
+- Validate config at `GET /api/v1/config/validate`.
 
 ## Logging
 - Backend logs are structured and colorized using Charmbracelet `log`.

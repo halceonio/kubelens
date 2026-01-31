@@ -57,7 +57,7 @@ export interface Pod {
 export interface AppResource {
   name: string;
   namespace: string;
-  type: 'Deployment' | 'StatefulSet' | 'Cluster' | 'Dragonfly';
+  type: 'Deployment' | 'StatefulSet' | 'Cluster' | 'Dragonfly' | string;
   replicas: number;
   readyReplicas: number;
   podNames: string[];
@@ -81,12 +81,15 @@ export interface SavedView {
   namespace?: string;
   labelRegex?: string;
   logLevel?: LogLevel | 'ALL';
+  group?: string;
+  autoApply?: boolean;
 }
 
 export interface ViewFilters {
   namespace?: string;
   labelRegex?: string;
   logLevel?: LogLevel | 'ALL';
+  group?: string;
 }
 
 export interface LogViewPreferences {

@@ -20,6 +20,9 @@ interface SidebarProps {
   onSaveView: (name: string) => void;
   onApplyView: (id: string | null) => void;
   onUpdateViewFilters: (filters: ViewFilters) => void;
+  onUpdateView: (id: string, updates: Partial<SavedView>) => void;
+  onDeleteView: (id: string) => void;
+  onSetAutoApplyView: (id: string | null) => void;
 }
 
 type ViewMode = 'groups' | 'pods' | 'apps';
@@ -39,7 +42,10 @@ const Sidebar: React.FC<SidebarProps> = ({
   viewFilters,
   onSaveView,
   onApplyView,
-  onUpdateViewFilters
+  onUpdateViewFilters,
+  onUpdateView,
+  onDeleteView,
+  onSetAutoApplyView
 }) => {
   const effectiveConfig = config ?? DEFAULT_UI_CONFIG;
   const appGroupsConfig = effectiveConfig.kubernetes.app_groups;
@@ -60,6 +66,7 @@ const Sidebar: React.FC<SidebarProps> = ({
   const [loadError, setLoadError] = useState<string | null>(null);
   const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
   const [saveViewName, setSaveViewName] = useState('');
+  const [isManageViewsOpen, setIsManageViewsOpen] = useState(false);
 
   const isPinned = (type: 'pod' | 'app', namespace: string, name: string) => {
     return pinnedIds.some(id => id.type === type && id.namespace === namespace && id.name === name);
@@ -190,6 +197,15 @@ const Sidebar: React.FC<SidebarProps> = ({
     };
   }, [labelRegex]);
 
+  const matchesGroupFilter = useMemo(() => {
+    const selectorKey = appGroupsConfig.labels.selector;
+    if (!viewFilters.group) return () => true;
+    return (labels?: Record<string, string>) => {
+      if (!labels) return false;
+      return labels[selectorKey] === viewFilters.group;
+    };
+  }, [viewFilters.group, appGroupsConfig.labels.selector]);
+
   const appGroupsMap = useMemo(() => {
     if (viewMode !== 'groups') return {};
 
@@ -202,6 +218,9 @@ const Sidebar: React.FC<SidebarProps> = ({
         return;
       }
       if (!matchesLabelFilter(app.labels)) {
+        return;
+      }
+      if (!matchesGroupFilter(app.labels)) {
         return;
       }
       const groupVal = app.labels?.[selector];
@@ -344,6 +363,12 @@ const Sidebar: React.FC<SidebarProps> = ({
               >
                 Save
               </button>
+              <button
+                onClick={() => setIsManageViewsOpen(true)}
+                className="px-2 py-1 text-[10px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+              >
+                Manage
+              </button>
             </div>
 
             <div className="flex items-center gap-2">
@@ -366,6 +391,21 @@ const Sidebar: React.FC<SidebarProps> = ({
               />
             </div>
 
+            {appGroupsConfig.enabled && (
+              <div className="flex items-center gap-2">
+                <select
+                  value={viewFilters.group || ''}
+                  onChange={(e) => onUpdateViewFilters({ ...viewFilters, group: e.target.value || undefined })}
+                  className="flex-1 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded px-2 py-1 text-[10px] text-slate-600 dark:text-slate-300"
+                >
+                  <option value="">All groups</option>
+                  {sortedGroupKeys.map((key) => (
+                    <option key={key} value={key}>{appGroupsMap[key].displayName}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             <div className="flex items-center gap-2">
               <select
                 value={viewFilters.logLevel || 'ALL'}
@@ -379,6 +419,78 @@ const Sidebar: React.FC<SidebarProps> = ({
                 <option value="DEBUG">Debug</option>
               </select>
             </div>
+
+            {(viewFilters.namespace || viewFilters.labelRegex || viewFilters.logLevel !== 'ALL' || viewFilters.group) && (
+              <div className="flex flex-wrap gap-2 pt-1">
+                {viewFilters.namespace && (
+                  <button
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, namespace: undefined })}
+                    className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    NS: {viewFilters.namespace} ✕
+                  </button>
+                )}
+                {viewFilters.group && (
+                  <button
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, group: undefined })}
+                    className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    Group: {viewFilters.group} ✕
+                  </button>
+                )}
+                {viewFilters.labelRegex && (
+                  <button
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, labelRegex: undefined })}
+                    className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    Label: {viewFilters.labelRegex} ✕
+                  </button>
+                )}
+                {viewFilters.logLevel && viewFilters.logLevel !== 'ALL' && (
+                  <button
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, logLevel: 'ALL' })}
+                    className="px-2 py-0.5 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    Level: {viewFilters.logLevel} ✕
+                  </button>
+                )}
+              </div>
+            )}
+
+            {namespaces.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                <button
+                  onClick={() => onUpdateViewFilters({ ...viewFilters, namespace: undefined })}
+                  className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded border ${!viewFilters.namespace ? 'bg-sky-500/15 text-sky-500 border-sky-500/30' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500'}`}
+                >
+                  All
+                </button>
+                {namespaces.slice(0, 6).map(ns => (
+                  <button
+                    key={ns.name}
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, namespace: ns.name })}
+                    className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded border ${viewFilters.namespace === ns.name ? 'bg-sky-500/15 text-sky-500 border-sky-500/30' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500'}`}
+                  >
+                    {ns.name}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {appGroupsConfig.enabled && sortedGroupKeys.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 pt-1">
+                {sortedGroupKeys.slice(0, 6).map((group) => (
+                  <button
+                    key={group}
+                    onClick={() => onUpdateViewFilters({ ...viewFilters, group })}
+                    className={`px-2 py-0.5 text-[9px] font-bold uppercase rounded border ${viewFilters.group === group ? 'bg-sky-500/15 text-sky-500 border-sky-500/30' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500'}`}
+                    title={appGroupsMap[group]?.displayName || group}
+                  >
+                    {appGroupsMap[group]?.displayName || group}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
@@ -552,6 +664,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                         pods[ns.name]
                           ?.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
                           .filter(p => matchesLabelFilter(p.labels))
+                          .filter(p => matchesGroupFilter(p.labels))
                           .map((pod) => (
                           <div key={pod.name} className="group relative">
                             <button
@@ -580,6 +693,7 @@ const Sidebar: React.FC<SidebarProps> = ({
                         apps[ns.name]
                           ?.filter(appMatchesSearch)
                           .filter(app => matchesLabelFilter(app.labels))
+                          .filter(app => matchesGroupFilter(app.labels))
                           .map((app) => {
                             const isMetaOnly = app.metadataOnly;
                             const statusColor = isMetaOnly
@@ -679,6 +793,78 @@ const Sidebar: React.FC<SidebarProps> = ({
                 disabled={!saveViewName.trim()}
               >
                 Save view
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isManageViewsOpen && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 px-4">
+          <div className="w-full max-w-lg rounded-xl border border-slate-200 dark:border-slate-700 bg-white dark:bg-slate-900 shadow-2xl">
+            <div className="px-5 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
+              <div>
+                <h3 className="text-sm font-bold text-slate-800 dark:text-slate-200">Manage saved views</h3>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+                  Rename, delete, or set a default view to apply on load.
+                </p>
+              </div>
+              <button
+                onClick={() => setIsManageViewsOpen(false)}
+                className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200"
+              >
+                <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="px-5 py-4 max-h-[60vh] overflow-y-auto custom-scrollbar space-y-3">
+              {savedViews.length === 0 && (
+                <div className="text-[11px] text-slate-500 dark:text-slate-400 italic">
+                  No saved views yet.
+                </div>
+              )}
+              {savedViews.map(view => (
+                <div key={view.id} className="flex items-center gap-3 rounded-lg border border-slate-200 dark:border-slate-800 px-3 py-2">
+                  <input
+                    value={view.name}
+                    onChange={(e) => onUpdateView(view.id, { name: e.target.value })}
+                    className="flex-1 rounded-md border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/70 px-2 py-1 text-[11px] text-slate-700 dark:text-slate-200"
+                  />
+                  <button
+                    onClick={() => onApplyView(view.id)}
+                    className="px-2 py-1 text-[9px] font-bold uppercase rounded bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500"
+                  >
+                    Apply
+                  </button>
+                  <button
+                    onClick={() => onSetAutoApplyView(view.id)}
+                    className={`px-2 py-1 text-[9px] font-bold uppercase rounded border ${view.autoApply ? 'bg-sky-500/15 text-sky-500 border-sky-500/30' : 'bg-slate-100 dark:bg-slate-800 border-slate-200 dark:border-slate-700 text-slate-500 hover:text-sky-500'}`}
+                    title="Apply on load"
+                  >
+                    Default
+                  </button>
+                  <button
+                    onClick={() => onDeleteView(view.id)}
+                    className="px-2 py-1 text-[9px] font-bold uppercase rounded bg-red-500/10 border border-red-500/30 text-red-500 hover:bg-red-500/20"
+                  >
+                    Delete
+                  </button>
+                </div>
+              ))}
+            </div>
+            <div className="flex items-center justify-between gap-2 px-5 py-3 border-t border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/60">
+              <button
+                onClick={() => onSetAutoApplyView(null)}
+                className="px-3 py-1.5 text-xs font-bold uppercase text-slate-500 hover:text-slate-700 dark:text-slate-400 dark:hover:text-slate-200"
+              >
+                Clear default
+              </button>
+              <button
+                onClick={() => setIsManageViewsOpen(false)}
+                className="px-4 py-1.5 text-xs font-bold uppercase rounded-md bg-slate-200 text-slate-600 dark:bg-slate-800 dark:text-slate-300"
+              >
+                Done
               </button>
             </div>
           </div>
