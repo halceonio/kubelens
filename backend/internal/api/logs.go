@@ -46,6 +46,7 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 	podTTL := time.Duration(apiCache.PodListTTLSeconds) * time.Second
 	appTTL := time.Duration(apiCache.AppListTTLSeconds) * time.Second
 	crdTTL := time.Duration(apiCache.CRDListTTLSeconds) * time.Second
+	metricsTTL := time.Duration(apiCache.MetricsListTTLSeconds) * time.Second
 	retryBase := time.Duration(apiCache.RetryBaseDelayMillis) * time.Millisecond
 	stats := newResourceStats()
 	limiter := newLogLimiter(cfg.Logs.RateLimitPerMinute, cfg.Logs.RateLimitBurst)
@@ -56,7 +57,7 @@ func NewKubeHandler(cfg *config.Config, client *kubernetes.Clientset, meta metad
 		appInclude: compileRegex(cfg.Kubernetes.AppFilters.IncludeRegex),
 		podExclude: parseLabelFilters(cfg.Kubernetes.PodFilters.ExcludeLabels),
 		appExclude: parseLabelFilters(cfg.Kubernetes.AppFilters.ExcludeLabels),
-		cache:      newResourceCache(podTTL, appTTL, crdTTL, apiCache.RetryAttempts, retryBase, stats),
+		cache:      newResourceCache(podTTL, appTTL, crdTTL, metricsTTL, apiCache.RetryAttempts, retryBase, stats),
 		stats:      stats,
 		statsStop:  make(chan struct{}),
 		metaClient: meta,

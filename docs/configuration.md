@@ -81,6 +81,13 @@ kubernetes:
 ```
 When enabled, list endpoints return `metadataOnly: true` resources with minimal fields, and the UI fetches full resource details on demand.
 
+Metrics responses are cached briefly to reduce metrics-server load:
+```yaml
+kubernetes:
+  api_cache:
+    metrics_list_ttl_seconds: 5
+```
+
 Cache metrics are exposed at:
 ```
 GET /api/v1/metrics

@@ -55,6 +55,7 @@ kubernetes:
     pod_list_ttl_seconds: 2
     app_list_ttl_seconds: 5
     crd_list_ttl_seconds: 10
+    metrics_list_ttl_seconds: 5
     retry_attempts: 3
     retry_base_delay_ms: 200
     metadata_only: false

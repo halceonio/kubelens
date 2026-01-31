@@ -25,6 +25,7 @@ type resourceCache struct {
 	podTTL          time.Duration
 	appTTL          time.Duration
 	crdTTL          time.Duration
+	metricsTTL      time.Duration
 	retryCount      int
 	retryBase       time.Duration
 	stats           *ResourceStats
@@ -54,11 +55,12 @@ type resourceCache struct {
 	podMetricsGroup singleflight.Group
 }
 
-func newResourceCache(podTTL, appTTL, crdTTL time.Duration, retryCount int, retryBase time.Duration, stats *ResourceStats) *resourceCache {
+func newResourceCache(podTTL, appTTL, crdTTL, metricsTTL time.Duration, retryCount int, retryBase time.Duration, stats *ResourceStats) *resourceCache {
 	return &resourceCache{
 		podTTL:      podTTL,
 		appTTL:      appTTL,
 		crdTTL:      crdTTL,
+		metricsTTL:  metricsTTL,
 		retryCount:  retryCount,
 		retryBase:   retryBase,
 		stats:       stats,
@@ -166,7 +168,7 @@ func (c *resourceCache) setMetaCustom(key string, items []metav1.PartialObjectMe
 }
 
 func (c *resourceCache) getPodMetrics(namespace string) ([]podMetricItem, bool) {
-	return getCache(c, c.podMetrics, namespace, c.podTTL)
+	return getCache(c, c.podMetrics, namespace, c.metricsTTL)
 }
 
 func (c *resourceCache) setPodMetrics(namespace string, items []podMetricItem) {

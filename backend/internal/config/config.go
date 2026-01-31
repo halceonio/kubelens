@@ -105,6 +105,7 @@ type KubernetesCache struct {
 	PodListTTLSeconds     int   `yaml:"pod_list_ttl_seconds"`
 	AppListTTLSeconds     int   `yaml:"app_list_ttl_seconds"`
 	CRDListTTLSeconds     int   `yaml:"crd_list_ttl_seconds"`
+	MetricsListTTLSeconds int   `yaml:"metrics_list_ttl_seconds"`
 	RetryAttempts         int   `yaml:"retry_attempts"`
 	RetryBaseDelayMillis  int   `yaml:"retry_base_delay_ms"`
 	MetadataOnly          bool  `yaml:"metadata_only"`
@@ -229,6 +230,9 @@ func applyDefaults(cfg *Config) {
 	}
 	if cfg.Kubernetes.APICache.CRDListTTLSeconds == 0 {
 		cfg.Kubernetes.APICache.CRDListTTLSeconds = 10
+	}
+	if cfg.Kubernetes.APICache.MetricsListTTLSeconds == 0 {
+		cfg.Kubernetes.APICache.MetricsListTTLSeconds = 5
 	}
 	if cfg.Kubernetes.APICache.InformerResyncSeconds == 0 {
 		cfg.Kubernetes.APICache.InformerResyncSeconds = 30

@@ -42,6 +42,58 @@ type podMetricItem struct {
 	Mem  resource.Quantity
 }
 
+func formatCPUUsage(q resource.Quantity) string {
+	if q.IsZero() {
+		return ""
+	}
+	milli := q.MilliValue()
+	if milli == 0 {
+		return ""
+	}
+	if milli < 1000 {
+		return fmt.Sprintf("%dm", milli)
+	}
+	if milli%1000 == 0 {
+		return fmt.Sprintf("%dc", milli/1000)
+	}
+	return fmt.Sprintf("%.2fc", float64(milli)/1000.0)
+}
+
+func formatMemUsage(q resource.Quantity) string {
+	if q.IsZero() {
+		return ""
+	}
+	bytes := q.Value()
+	if bytes == 0 {
+		return ""
+	}
+	const (
+		ki = 1024
+		mi = 1024 * ki
+		gi = 1024 * mi
+		ti = 1024 * gi
+	)
+	switch {
+	case bytes >= ti:
+		return fmt.Sprintf("%.2fTi", float64(bytes)/ti)
+	case bytes >= gi:
+		return fmt.Sprintf("%.2fGi", float64(bytes)/gi)
+	case bytes >= mi:
+		return fmt.Sprintf("%.2fMi", float64(bytes)/mi)
+	case bytes >= ki:
+		return fmt.Sprintf("%.2fKi", float64(bytes)/ki)
+	default:
+		return fmt.Sprintf("%dB", bytes)
+	}
+}
+
+func formatQuantityOrEmpty(q resource.Quantity) string {
+	if q.IsZero() {
+		return ""
+	}
+	return q.String()
+}
+
 type containerResponse struct {
 	Name         string `json:"name"`
 	Image        string `json:"image"`
@@ -648,14 +700,14 @@ func (h *KubeHandler) mapPod(pod *corev1.Pod, includeDetails bool, user *auth.Us
 	requests, limits := sumResourceRequests(pod.Spec.Containers)
 
 	usage := resourceUsage{
-		CPURequest: requests.cpu.String(),
-		MemRequest: requests.mem.String(),
-		CPULimit:   limits.cpu.String(),
-		MemLimit:   limits.mem.String(),
+		CPURequest: formatQuantityOrEmpty(requests.cpu),
+		MemRequest: formatQuantityOrEmpty(requests.mem),
+		CPULimit:   formatQuantityOrEmpty(limits.cpu),
+		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
 	if metric, ok := metrics[pod.Name]; ok {
-		usage.CPUUsage = metric.CPU.String()
-		usage.MemUsage = metric.Mem.String()
+		usage.CPUUsage = formatCPUUsage(metric.CPU)
+		usage.MemUsage = formatMemUsage(metric.Mem)
 	}
 
 	env := map[string]string{}
@@ -772,14 +824,14 @@ func (h *KubeHandler) mapDeployment(ctx context.Context, dep *appsv1.Deployment,
 	env, envSecrets := extractEnv(dep.Namespace, firstEnv(dep.Spec.Template.Spec.Containers), firstEnvFrom(dep.Spec.Template.Spec.Containers), user, revealSecrets, h.client)
 
 	usage := resourceUsage{
-		CPURequest: requests.cpu.String(),
-		MemRequest: requests.mem.String(),
-		CPULimit:   limits.cpu.String(),
-		MemLimit:   limits.mem.String(),
+		CPURequest: formatQuantityOrEmpty(requests.cpu),
+		MemRequest: formatQuantityOrEmpty(requests.mem),
+		CPULimit:   formatQuantityOrEmpty(limits.cpu),
+		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
 	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = cpu.String()
-		usage.MemUsage = mem.String()
+		usage.CPUUsage = formatCPUUsage(cpu)
+		usage.MemUsage = formatMemUsage(mem)
 	}
 
 	return appResponse{
@@ -864,14 +916,14 @@ func (h *KubeHandler) mapStatefulSet(ctx context.Context, sts *appsv1.StatefulSe
 	env, envSecrets := extractEnv(sts.Namespace, firstEnv(sts.Spec.Template.Spec.Containers), firstEnvFrom(sts.Spec.Template.Spec.Containers), user, revealSecrets, h.client)
 
 	usage := resourceUsage{
-		CPURequest: requests.cpu.String(),
-		MemRequest: requests.mem.String(),
-		CPULimit:   limits.cpu.String(),
-		MemLimit:   limits.mem.String(),
+		CPURequest: formatQuantityOrEmpty(requests.cpu),
+		MemRequest: formatQuantityOrEmpty(requests.mem),
+		CPULimit:   formatQuantityOrEmpty(limits.cpu),
+		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
 	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = cpu.String()
-		usage.MemUsage = mem.String()
+		usage.CPUUsage = formatCPUUsage(cpu)
+		usage.MemUsage = formatMemUsage(mem)
 	}
 
 	return appResponse{
@@ -952,14 +1004,14 @@ func (h *KubeHandler) mapCnpgCluster(ctx context.Context, cluster *cnpgCluster, 
 	}
 
 	usage := resourceUsage{
-		CPURequest: requests.cpu.String(),
-		MemRequest: requests.mem.String(),
-		CPULimit:   limits.cpu.String(),
-		MemLimit:   limits.mem.String(),
+		CPURequest: formatQuantityOrEmpty(requests.cpu),
+		MemRequest: formatQuantityOrEmpty(requests.mem),
+		CPULimit:   formatQuantityOrEmpty(limits.cpu),
+		MemLimit:   formatQuantityOrEmpty(limits.mem),
 	}
 	if cpu, mem, ok := sumMetricsForPods(pods, metrics); ok {
-		usage.CPUUsage = cpu.String()
-		usage.MemUsage = mem.String()
+		usage.CPUUsage = formatCPUUsage(cpu)
+		usage.MemUsage = formatMemUsage(mem)
 	}
 
 	return appResponse{
@@ -2266,8 +2318,8 @@ func (h *KubeHandler) fetchPodMetrics(ctx context.Context, namespace, name strin
 	}
 
 	return resourceUsage{
-		CPUUsage: cpu.String(),
-		MemUsage: mem.String(),
+		CPUUsage: formatCPUUsage(cpu),
+		MemUsage: formatMemUsage(mem),
 	}, nil
 }
 
