@@ -1,7 +1,7 @@
-
-import React, { useState, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { AuthUser } from '../types';
 import { MOCK_CONFIG, USE_MOCKS } from '../constants';
+import { onUnauthorized, resetUnauthorizedState } from '../services/authEvents';
 
 interface AuthGuardProps {
   children: React.ReactNode;
@@ -13,6 +13,7 @@ type JwtClaims = {
   email?: string;
   preferred_username?: string;
   groups?: string[];
+  exp?: number;
 };
 
 type AuthConfig = {
@@ -23,11 +24,26 @@ type AuthConfig = {
   allowedSecretsGroups?: string[];
 };
 
+type StoredAuthConfig = AuthConfig & { savedAt: number };
+
+type RedirectTracker = {
+  windowStart: number;
+  count: number;
+};
+
 const DEFAULT_ALLOWED_GROUPS = ['k8s-logs-access'];
 const AUTH_CONFIG_STORAGE_KEY = 'kubelens_auth_config';
 const AUTH_CONFIG_TTL_MS = 5 * 60 * 1000;
+const ACCESS_TOKEN_STORAGE_KEY = 'kubelens_access_token';
+const OAUTH_STATE_STORAGE_KEY = 'kubelens_oauth_state';
+const POST_LOGIN_HASH_STORAGE_KEY = 'kubelens_post_login_hash';
+const REDIRECT_TRACKER_STORAGE_KEY = 'kubelens_auth_redirect_tracker';
+const TOKEN_EXPIRY_SKEW_MS = 30 * 1000;
+const REDIRECT_WINDOW_MS = 2 * 60 * 1000;
+const MAX_REDIRECTS_IN_WINDOW = 3;
 
-type StoredAuthConfig = AuthConfig & { savedAt: number };
+const AUTH_COOKIE_PREFIXES = ['kubelens', '_oauth2', 'oauth2'];
+const AUTH_COOKIE_NAMES = ['kubelens_session', 'kubelens_access_token', '_oauth2_proxy', '_oauth2_proxy_1', 'oauth2_proxy'];
 
 const loadCachedAuthConfig = (): AuthConfig | null => {
   try {
@@ -71,11 +87,140 @@ const parseJwtClaims = (token: string): JwtClaims | null => {
   }
 };
 
+const isTokenExpired = (claims: JwtClaims | null) => {
+  if (!claims?.exp) return false;
+  return Date.now() >= (claims.exp * 1000) - TOKEN_EXPIRY_SKEW_MS;
+};
+
+const getCookieNamesToClear = () => {
+  const names = new Set(AUTH_COOKIE_NAMES);
+  const cookieHeader = document.cookie || '';
+  const currentCookieNames = cookieHeader
+    .split(';')
+    .map((part) => part.split('=')[0]?.trim())
+    .filter((name): name is string => Boolean(name));
+
+  for (const name of currentCookieNames) {
+    const lower = name.toLowerCase();
+    if (AUTH_COOKIE_PREFIXES.some((prefix) => lower.startsWith(prefix))) {
+      names.add(name);
+    }
+  }
+
+  return [...names];
+};
+
+const getDomainCandidates = () => {
+  const hostname = window.location.hostname;
+  const parts = hostname.split('.').filter(Boolean);
+  const domains = new Set<string>(['']);
+  for (let i = 0; i < parts.length - 1; i += 1) {
+    domains.add(`.${parts.slice(i).join('.')}`);
+  }
+  return [...domains];
+};
+
+const getPathCandidates = () => {
+  const paths = new Set<string>(['/']);
+  const segments = (window.location.pathname || '/').split('/').filter(Boolean);
+  if (segments.length === 0) {
+    paths.add('/');
+    return [...paths];
+  }
+
+  let current = '';
+  for (const segment of segments) {
+    current += `/${segment}`;
+    paths.add(current);
+  }
+
+  return [...paths];
+};
+
+const clearCookie = (name: string) => {
+  const domains = getDomainCandidates();
+  const paths = getPathCandidates();
+
+  for (const domain of domains) {
+    for (const path of paths) {
+      for (const secure of ['', '; Secure']) {
+        const domainPart = domain ? `; domain=${domain}` : '';
+        document.cookie = `${name}=; Max-Age=0; expires=Thu, 01 Jan 1970 00:00:00 GMT; path=${path}${domainPart}; SameSite=Lax${secure}`;
+      }
+    }
+  }
+};
+
+const clearAuthCookies = () => {
+  for (const name of getCookieNamesToClear()) {
+    clearCookie(name);
+  }
+};
+
+const clearLocalAuthState = () => {
+  localStorage.removeItem(ACCESS_TOKEN_STORAGE_KEY);
+  sessionStorage.removeItem(OAUTH_STATE_STORAGE_KEY);
+  clearAuthCookies();
+};
+
+const rememberPostLoginHash = () => {
+  sessionStorage.setItem(POST_LOGIN_HASH_STORAGE_KEY, window.location.hash || '');
+};
+
+const consumePostLoginHash = () => {
+  const hash = sessionStorage.getItem(POST_LOGIN_HASH_STORAGE_KEY) || '';
+  sessionStorage.removeItem(POST_LOGIN_HASH_STORAGE_KEY);
+  return hash;
+};
+
+const resetRedirectTracker = () => {
+  sessionStorage.removeItem(REDIRECT_TRACKER_STORAGE_KEY);
+};
+
+const consumeRedirectAttempt = () => {
+  const now = Date.now();
+  let tracker: RedirectTracker = { windowStart: now, count: 0 };
+
+  try {
+    const raw = sessionStorage.getItem(REDIRECT_TRACKER_STORAGE_KEY);
+    if (raw) {
+      const parsed = JSON.parse(raw) as RedirectTracker;
+      if (typeof parsed.windowStart === 'number' && typeof parsed.count === 'number') {
+        tracker = parsed;
+      }
+    }
+  } catch {
+    tracker = { windowStart: now, count: 0 };
+  }
+
+  if (now - tracker.windowStart > REDIRECT_WINDOW_MS) {
+    tracker = { windowStart: now, count: 0 };
+  }
+
+  tracker.count += 1;
+
+  try {
+    sessionStorage.setItem(REDIRECT_TRACKER_STORAGE_KEY, JSON.stringify(tracker));
+  } catch {
+    // ignore write failures
+  }
+
+  return tracker.count <= MAX_REDIRECTS_IN_WINDOW;
+};
+
 const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
   const [user, setUser] = useState<AuthUser | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [authConfig, setAuthConfig] = useState<AuthConfig | null>(null);
+
+  const authConfigRef = useRef<AuthConfig | null>(null);
+  const pendingUnauthorizedRef = useRef(false);
+  const isRedirectingRef = useRef(false);
+
+  useEffect(() => {
+    authConfigRef.current = authConfig;
+  }, [authConfig]);
 
   const buildAuthUrl = (cfg: AuthConfig, state: string, redirectUri: string) => {
     const url = new URL(`${cfg.keycloakUrl}/realms/${cfg.realm}/protocol/openid-connect/auth`);
@@ -87,25 +232,88 @@ const AuthGuard: React.FC<AuthGuardProps> = ({ children, onAuth }) => {
     return url.toString();
   };
 
-const setUserFromToken = (token?: string | null, cfg?: AuthConfig | null) => {
-  if (token) {
-    localStorage.setItem('kubelens_access_token', token);
-  }
-  const claims = token ? parseJwtClaims(token) : null;
-  const groups = claims?.groups ?? (USE_MOCKS ? ['k8s-logs-access', 'developers'] : []);
-  const allowedSecretsGroups = cfg?.allowedSecretsGroups || [];
-  const canViewSecrets = allowedSecretsGroups.length > 0 && groups.some((group) => allowedSecretsGroups.includes(group));
-  const authUser: AuthUser = {
-    username: claims?.preferred_username || claims?.email || claims?.sub || (USE_MOCKS ? 'dev_user' : 'unknown'),
-    email: claims?.email || (USE_MOCKS ? 'dev@enterprise.com' : ''),
-    groups,
-    isAuthenticated: Boolean(token) || USE_MOCKS,
-    accessToken: token,
-    canViewSecrets
-  };
-  setUser(authUser);
-  if (onAuth) onAuth(authUser);
-};
+  const setUserFromToken = useCallback((token?: string | null, cfg?: AuthConfig | null) => {
+    if (token) {
+      localStorage.setItem(ACCESS_TOKEN_STORAGE_KEY, token);
+    }
+
+    const claims = token ? parseJwtClaims(token) : null;
+    const groups = claims?.groups ?? (USE_MOCKS ? ['k8s-logs-access', 'developers'] : []);
+    const allowedSecretsGroups = cfg?.allowedSecretsGroups || [];
+    const canViewSecrets = allowedSecretsGroups.length > 0 && groups.some((group) => allowedSecretsGroups.includes(group));
+
+    const authUser: AuthUser = {
+      username: claims?.preferred_username || claims?.email || claims?.sub || (USE_MOCKS ? 'dev_user' : 'unknown'),
+      email: claims?.email || (USE_MOCKS ? 'dev@enterprise.com' : ''),
+      groups,
+      isAuthenticated: Boolean(token) || USE_MOCKS,
+      accessToken: token,
+      canViewSecrets
+    };
+
+    resetUnauthorizedState();
+    resetRedirectTracker();
+    isRedirectingRef.current = false;
+    setUser(authUser);
+    if (onAuth) onAuth(authUser);
+  }, [onAuth]);
+
+  const startLoginRedirect = useCallback((cfg: AuthConfig, opts?: { force?: boolean; reason?: string }) => {
+    if (USE_MOCKS) {
+      window.location.reload();
+      return;
+    }
+
+    if (isRedirectingRef.current) return;
+
+    if (opts?.force) {
+      resetRedirectTracker();
+      resetUnauthorizedState();
+    }
+
+    if (!opts?.force && !consumeRedirectAttempt()) {
+      clearLocalAuthState();
+      resetUnauthorizedState();
+      isRedirectingRef.current = false;
+      setUser(null);
+      setError('Session expired repeatedly. Automatic sign-in was stopped to prevent a redirect loop. Click Retry Login.');
+      setLoading(false);
+      return;
+    }
+
+    isRedirectingRef.current = true;
+    setUser(null);
+    setLoading(true);
+    setError(null);
+
+    clearLocalAuthState();
+    rememberPostLoginHash();
+
+    const newState = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+    sessionStorage.setItem(OAUTH_STATE_STORAGE_KEY, newState);
+
+    const redirectUri = (import.meta as any).env?.VITE_KEYCLOAK_REDIRECT_URI || `${window.location.origin}${window.location.pathname}`;
+    window.location.assign(buildAuthUrl(cfg, newState, redirectUri));
+  }, []);
+
+  useEffect(() => {
+    if (USE_MOCKS) return;
+
+    return onUnauthorized(() => {
+      const cfg = authConfigRef.current;
+      if (!cfg) {
+        pendingUnauthorizedRef.current = true;
+        return;
+      }
+      startLoginRedirect(cfg, { reason: 'unauthorized-response' });
+    });
+  }, [startLoginRedirect]);
+
+  useEffect(() => {
+    if (!authConfig || !pendingUnauthorizedRef.current) return;
+    pendingUnauthorizedRef.current = false;
+    startLoginRedirect(authConfig, { reason: 'queued-unauthorized-response' });
+  }, [authConfig, startLoginRedirect]);
 
   useEffect(() => {
     const run = async () => {
@@ -185,14 +393,16 @@ const setUserFromToken = (token?: string | null, cfg?: AuthConfig | null) => {
       const urlParams = new URLSearchParams(window.location.search);
       const code = urlParams.get('code');
       const state = urlParams.get('state');
-      const storedState = sessionStorage.getItem('kubelens_oauth_state');
+      const storedState = sessionStorage.getItem(OAUTH_STATE_STORAGE_KEY);
 
       if (code) {
         if (!state || !storedState || state !== storedState) {
+          sessionStorage.removeItem(OAUTH_STATE_STORAGE_KEY);
           setError('Invalid login state. Please try again.');
           setLoading(false);
           return;
         }
+
         try {
           const res = await fetch('/api/v1/auth/token', {
             method: 'POST',
@@ -203,13 +413,17 @@ const setUserFromToken = (token?: string | null, cfg?: AuthConfig | null) => {
             const text = await res.text();
             throw new Error(text || `Token exchange failed (${res.status})`);
           }
+
           const payload = await res.json();
           const token = payload.access_token as string | undefined;
           if (!token) {
             throw new Error('Missing access token in response');
           }
-          sessionStorage.removeItem('kubelens_oauth_state');
-          window.history.replaceState({}, document.title, window.location.pathname + window.location.hash);
+
+          sessionStorage.removeItem(OAUTH_STATE_STORAGE_KEY);
+          const postLoginHash = consumePostLoginHash();
+          const targetHash = postLoginHash || window.location.hash || '';
+          window.history.replaceState({}, document.title, `${window.location.pathname}${targetHash}`);
           setUserFromToken(token, cfg);
           setLoading(false);
           return;
@@ -221,20 +435,23 @@ const setUserFromToken = (token?: string | null, cfg?: AuthConfig | null) => {
         }
       }
 
-      const token = (import.meta as any).env?.VITE_KUBELENS_TOKEN || localStorage.getItem('kubelens_access_token');
+      const token = (import.meta as any).env?.VITE_KUBELENS_TOKEN || localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
       if (token || USE_MOCKS) {
+        const claims = token ? parseJwtClaims(token) : null;
+        if (token && isTokenExpired(claims)) {
+          startLoginRedirect(cfg, { reason: 'stored-token-expired' });
+          return;
+        }
         setUserFromToken(token, cfg);
         setLoading(false);
         return;
       }
 
-      const newState = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-      sessionStorage.setItem('kubelens_oauth_state', newState);
-      window.location.href = buildAuthUrl(cfg, newState, redirectUri);
+      startLoginRedirect(cfg, { reason: 'missing-token' });
     };
 
     run();
-  }, []);
+  }, [setUserFromToken, startLoginRedirect]);
 
   if (loading) {
     return (
@@ -260,21 +477,18 @@ const setUserFromToken = (token?: string | null, cfg?: AuthConfig | null) => {
             ) : missingToken ? (
               <>No access token was found. Please sign in again to access <strong>KubeLens</strong>.</>
             ) : (
-              <>Your account does not have the required permissions to access <strong>KubeLens</strong>. 
+              <>Your account does not have the required permissions to access <strong>KubeLens</strong>.
               You must belong to one of the <code>{allowedGroups.join(', ')}</code> Keycloak groups.</>
             )}
           </p>
-          <button 
+          <button
             onClick={() => {
               if (USE_MOCKS) {
                 window.location.reload();
                 return;
               }
-              const newState = Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-              sessionStorage.setItem('kubelens_oauth_state', newState);
-              const redirectUri = (import.meta as any).env?.VITE_KEYCLOAK_REDIRECT_URI || `${window.location.origin}${window.location.pathname}`;
               if (authConfig) {
-                window.location.href = buildAuthUrl(authConfig, newState, redirectUri);
+                startLoginRedirect(authConfig, { force: true, reason: 'manual-retry' });
               } else {
                 window.location.reload();
               }

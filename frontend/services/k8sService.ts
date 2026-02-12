@@ -1,6 +1,7 @@
 
 import { Pod, LogEntry, LogLevel, AppResource, Namespace } from '../types';
 import { MOCK_PODS, MOCK_NAMESPACES, USE_MOCKS } from '../constants';
+import { ensureOk } from './http';
 
 const API_BASE = '/api/v1';
 
@@ -11,9 +12,7 @@ const buildHeaders = (token?: string | null) => {
 
 const fetchJSON = async <T>(url: string, token?: string | null): Promise<T> => {
   const res = await fetch(url, { headers: buildHeaders(token) });
-  if (!res.ok) {
-    throw new Error(`Request failed: ${res.status}`);
-  }
+  await ensureOk(res, 'k8sService');
   return res.json();
 };
 

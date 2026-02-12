@@ -84,8 +84,17 @@ release: ## Trigger release (runs ci-e2e before publishing)
 	$(MAKE) release-tag VERSION=$(VERSION)
 
 
-.PHONY: docker-build
+.PHONY: docker-build docker-build-cloud
 docker-build: ## Build and push Docker image to registry
+	@docker buildx build \
+		--platform linux/amd64 \
+		-t $(REGISTRY)/kubelens:$(DOCKER_TAG) \
+		-t $(REGISTRY_ALT)/kubelens:$(DOCKER_TAG) \
+		--build-arg VITE_USE_MOCKS=false \
+		-f docker/Dockerfile \
+		--push .
+	
+docker-build-cloud: ## Build and push Docker image to registry
 	@docker buildx build \
 		--platform linux/amd64 \
 		--builder cloud-nudevco-default \

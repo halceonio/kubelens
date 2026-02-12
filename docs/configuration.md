@@ -17,6 +17,13 @@ This endpoint returns the Keycloak URL, realm, client ID, and allowed groups fro
 
 > Note: KubeLens expects a `groups` claim in the access token. In Keycloak, add the **Group Membership** mapper (client scope `groups`) to the `kubelens` client and include the `groups` scope in the auth request.
 
+## Session expiry behavior
+When the backend returns `401 Unauthorized` (for example, expired access token), the frontend now performs an auth reset flow:
+- Clears the cached access token and best-effort auth cookies on the KubeLens domain.
+- Redirects to Keycloak login automatically.
+- Preserves the current URL hash (`#view=...`) and restores it after successful login.
+- Applies a loop guard (max 3 automatic redirects in 2 minutes); if exceeded, auto-redirect stops and the user can retry manually from the login error UI.
+
 ## Log stream tuning
 ```yaml
 logs:

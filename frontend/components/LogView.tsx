@@ -2,6 +2,8 @@
 import React, { useState, useEffect, useRef, useMemo, memo, useCallback } from 'react';
 import { LogEntry, Pod, LogLevel, AppResource, UiConfig } from '../types';
 import { getPodLogs } from '../services/k8sService';
+import { emitUnauthorized } from '../services/authEvents';
+import { ApiError, isApiErrorStatus } from '../services/http';
 import { FixedSizeList } from 'react-window';
 import { DEFAULT_UI_CONFIG, USE_MOCKS } from '../constants';
 
@@ -725,8 +727,12 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
           },
           signal: controller.signal
         });
+        if (res.status === 401) {
+          emitUnauthorized({ source: 'logStream', status: 401 });
+          throw new ApiError(401, 'Session expired');
+        }
         if (!res.ok || !res.body) {
-          throw new Error(`stream error ${res.status}`);
+          throw new ApiError(res.status, `stream error ${res.status}`);
         }
         setLoadError(null);
 
@@ -793,6 +799,11 @@ const LogView: React.FC<LogViewProps> = ({ resource, onClose, isMaximized, acces
       } catch (err) {
         if (!mounted) return;
         if (isPausedRef.current) {
+          return;
+        }
+        if (isApiErrorStatus(err, 401)) {
+          setStreamStatus('paused');
+          setLoadError('Session expired. Redirecting to sign-in...');
           return;
         }
         const message = err instanceof Error ? err.message : 'Log stream disconnected';

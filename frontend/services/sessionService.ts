@@ -1,4 +1,5 @@
 import { ResourceIdentifier, SavedView, ViewFilters, LogViewPreferences } from '../types';
+import { ensureOk } from './http';
 
 export type ThemePreference = 'light' | 'dark';
 
@@ -27,9 +28,7 @@ export const fetchSession = async (token: string): Promise<SessionPayload | null
     method: 'GET',
     headers: buildHeaders(token)
   });
-  if (!res.ok) {
-    return null;
-  }
+  await ensureOk(res, 'sessionService.fetchSession');
   const data = await res.json();
   return data as SessionPayload;
 };
@@ -40,9 +39,7 @@ export const saveSession = async (token: string, payload: SessionPayload): Promi
     headers: buildHeaders(token),
     body: JSON.stringify(payload)
   });
-  if (!res.ok) {
-    throw new Error('Failed to save session');
-  }
+  await ensureOk(res, 'sessionService.saveSession');
 };
 
 export const clearSession = async (token: string): Promise<void> => {
@@ -50,7 +47,5 @@ export const clearSession = async (token: string): Promise<void> => {
     method: 'DELETE',
     headers: buildHeaders(token)
   });
-  if (!res.ok) {
-    throw new Error('Failed to clear session');
-  }
+  await ensureOk(res, 'sessionService.clearSession');
 };
